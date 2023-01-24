@@ -110,6 +110,7 @@ class Masking(object):
         redistribution_mode="momentum",
         threshold=0.001,
         args=None,
+        writer=None,
     ):
         growth_modes = ["random", "momentum", "momentum_neuron", "gradient"]
         if growth_mode not in growth_modes:
@@ -143,8 +144,10 @@ class Masking(object):
         else:
             self.prune_every_k_steps = self.args.update_frequency
 
-        if self.args.ramanujan:
-            self.ram_checker = Ramanujan()
+        # if self.args.ramanujan:
+        self.ram_checker = Ramanujan()
+
+        self.writer = writer
 
     def init(self, mode="ERK", density=0.05, erk_power_scale=1.0):
         self.density = density
@@ -290,7 +293,8 @@ class Masking(object):
             )
         )
 
-    def step(self):
+    def step(self, epoch):
+        self.epoch = epoch
         self.optimizer.step()
         self.apply_mask()
         self.death_rate_decay.step()
@@ -299,8 +303,16 @@ class Masking(object):
 
         if self.prune_every_k_steps is not None:
             if self.steps % self.prune_every_k_steps == 0:
-                self.truncate_weights()
-                _, _ = self.fired_masks_update()
+                if not self.args.ramanujan:  # not hasattr(self, "ram_checker"):
+                    self.truncate_weights()
+                else:
+                    self.iterative_truncate_weights()
+
+                _, total_fired_weights = self.fired_masks_update()
+                if self.writer is not None:
+                    self.writer.log_scalar(
+                        "total-fired-weight", total_fired_weights, epoch
+                    )
                 self.print_nonzero_counts()
 
     def add_module(self, module, density, sparse_init="ER"):
@@ -434,7 +446,6 @@ class Masking(object):
         )
 
     def truncate_weights(self):
-
         for module in self.modules:
             for name, weight in module.named_parameters():
                 if name not in self.masks:
@@ -452,13 +463,6 @@ class Masking(object):
                     new_mask = self.taylor_FO(mask, weight, name)
                 elif self.death_mode == "threshold":
                     new_mask = self.threshold_death(mask, weight, name)
-
-                if hasattr(self, "ram_checker"):
-                    if (m1 := self.ram_checker(new_mask)) < 0:
-                        print(f"failed to prune {name=} {m1=}")
-                        new_mask = self.masks[name]
-                    else:
-                        print(f"prune {name=} {m1=}")
 
                 self.num_remove[name] = int(
                     self.name2nonzeros[name] - new_mask.sum().item()
@@ -484,20 +488,106 @@ class Masking(object):
                 elif self.growth_mode == "gradient":
                     new_mask = self.gradient_growth(name, new_mask, weight)
 
-                if hasattr(self, "ram_checker"):
-                    if (m1 := self.ram_checker(new_mask.float(), True)) < 0:
-                        print(f"failed to grow {name=} {m1=}")
-                        new_mask = self.masks[name]
-                    else:
-                        print(f"grow {name=} {m1=}")
-
                 new_nonzero = new_mask.sum().item()
 
                 # exchanging masks
                 self.masks.pop(name)
                 self.masks[name] = new_mask.float()
-
+        self.calc_imdb()
         self.apply_mask()
+
+    def iterative_truncate_weights(self, max_retry=10):
+        """for ramanujan check"""
+        names = list(self.masks.keys())
+        cnt = 0
+        while len(names) > 0 and cnt < max_retry:
+            mask_copy = {n: self.masks[n].clone() for n in names}
+            for module in self.modules:
+
+                for name, weight in module.named_parameters():
+                    if name not in names:
+                        continue
+                    mask = self.masks[name]
+                    self.name2nonzeros[name] = mask.sum().item()
+                    self.name2zeros[name] = mask.numel() - self.name2nonzeros[name]
+
+                    # death
+                    if self.death_mode == "magnitude":
+                        new_mask = self.magnitude_death(mask, weight, name)
+                    elif self.death_mode == "SET":
+                        new_mask = self.magnitude_and_negativity_death(
+                            mask, weight, name
+                        )
+                    elif self.death_mode == "Taylor_FO":
+                        new_mask = self.taylor_FO(mask, weight, name)
+                    elif self.death_mode == "threshold":
+                        new_mask = self.threshold_death(mask, weight, name)
+                    self.num_remove[name] = int(
+                        self.name2nonzeros[name] - new_mask.sum().item()
+                    )
+                    self.masks[name] = new_mask
+
+            for module in self.modules:
+                for name, weight in module.named_parameters():
+                    if name not in names:  # or name in skip_grow:
+                        continue
+                    new_mask = self.masks[name].data.byte()
+
+                    # growth
+                    if self.growth_mode == "random":
+                        new_mask = self.random_growth(name, new_mask, weight)
+
+                    if self.growth_mode == "random_unfired":
+                        new_mask = self.random_unfired_growth(name, new_mask, weight)
+
+                    elif self.growth_mode == "momentum":
+                        new_mask = self.momentum_growth(name, new_mask, weight)
+
+                    elif self.growth_mode == "gradient":
+                        new_mask = self.gradient_growth(name, new_mask, weight)
+
+                    new_nonzero = new_mask.sum().item()
+
+                    imdb, w_imdb = self.ram_checker(new_mask, weight)
+
+                    if imdb > 0:
+                        names.remove(name)
+                    else:
+                        if (
+                            w_imdb > 0 and self.ram_checker(new_mask, weight, True) > 0
+                        ):  # self.ram_checker(mask_copy[name], weight, backward=True):
+                            names.remove(name)
+                        else:
+                            new_mask = mask_copy[name]
+
+                    # exchanging masks
+                    self.masks.pop(name)
+                    self.masks[name] = new_mask.float()
+            cnt += 1
+        self.calc_imdb()
+        self.apply_mask()
+
+    def calc_imdb(self):
+        imdbs = []
+        w_imdbs = []
+        for module in self.modules:
+            for name, weight in module.named_parameters():
+                if name not in self.masks:  # or name in skip_grow:
+                    continue
+                imdb, w_imdb = self.ram_checker(self.masks[name], weight)
+
+                imdbs.append(imdb)
+                w_imdbs.append(w_imdb)
+
+                print(f"{name=} {imdb=} w_imdb={w_imdb=}")
+
+        imdb = sum(imdbs) / len(imdbs)
+        w_imdb = sum(w_imdbs) / len(imdbs)
+
+        print(f"model's characteristic {imdb=:.4f} {w_imdb=:.4f}")
+        if self.writer is not None:
+            self.writer.log_scalar("imdb", imdb, self.epoch)
+            self.writer.log_scalar("wimdb", w_imdb, self.epoch)
 
     """
                     DEATH
@@ -507,7 +597,6 @@ class Masking(object):
         return torch.abs(weight.data) > self.threshold
 
     def taylor_FO(self, mask, weight, name):
-
         num_remove = math.ceil(self.death_rate * self.name2nonzeros[name])
         num_zeros = self.name2zeros[name]
         k = math.ceil(num_zeros + num_remove)
@@ -518,7 +607,6 @@ class Masking(object):
         return mask
 
     def magnitude_death(self, mask, weight, name):
-
         num_remove = math.ceil(self.death_rate * self.name2nonzeros[name])
         if num_remove == 0.0:
             return weight.data != 0.0

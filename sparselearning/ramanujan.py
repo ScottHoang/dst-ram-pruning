@@ -17,43 +17,59 @@ class Ramanujan:
 
     # self.model = self.model.to(device)
 
-    def __call__(self, mask, grow=False):
-        mask = mask.data.clone()
-        return self.mask_score(mask, grow)
+    def __call__(self, mask, weight, backward=False):
+        if backward:
+            return self.backward_score(mask, weight)
+        else:
+            return self.mask_score(mask, weight)
 
-    def mask_score(self, mask: th.Tensor, grow: bool) -> float:
-        if grow:
-            grad_bound, randomness_score, meta = self.ramanujan_bounds(mask)
-            return grad_bound * -1
+    def backward_score(
+        self,
+        mask: th.Tensor,
+        weight: th.Tensor,
+    ):
+        shape = mask.shape
+        outc, inc = shape[0], shape[1]
+        flatten_mask = mask.reshape(outc, -1)
+        flatten_weight = weight.reshape(outc, -1)
 
+        narc = self.ramanujan_bounds(flatten_mask)[1]
+        # narc > 0 : model is structured
+        return narc
+
+    def mask_score(self, mask: th.Tensor, weight: th.Tensor) -> typ.Tuple[float, float]:
         shape = mask.shape
         outc, inc = shape[0], shape[1]
         flatten_mask = mask.reshape(outc, -1).T
+        flatten_weight = weight.reshape(outc, -1).T
         fan_out = flatten_mask.sum(dim=1)
 
-        layer_score = []
+        ls: typ.List[float] = []  # layer score
+        wls: typ.List[float] = []  # weighted layer score
+
         for _fan_out in fan_out.unique():
             if _fan_out == 0:
                 continue
             index = fan_out == _fan_out
             submask = flatten_mask[index].T  # out_c x in_c
-            if index.sum() < 3:
-                continue
-            if submask.sum() < 3:
-                continue
-            degree_bound, random_bound, meta = self.ramanujan_bounds(submask)
+            submask_weight = flatten_weight[index].T
+            degree_bound, *_ = self.ramanujan_bounds(submask)
+            w_degree_bound = self.weighted_ramanujan_bounds(submask_weight)
+
+            left_vert = index.sum()
+            right_vert = (submask.sum(dim=1) > 0).sum()
+            cheeger = max(left_vert, right_vert) / (left_vert + right_vert - 1)
+
             if degree_bound == float("inf"):
-                pass
+                continue
             else:
                 # total_edges = submask.sum()
                 # left_vol = total_edges
                 # right_vol = flatten_mask.T[submask.sum(dim=1) > 0].sum()
-                left_vert = index.sum()
-                right_vert = (submask.sum(dim=1) > 0).sum()
-                cheeger = max(left_vert, right_vert) / (left_vert + right_vert - 1)
-                layer_score.append(cheeger * degree_bound)
-        score = sum(layer_score)  # / len(layer_score)
-        return score
+                ls.append(cheeger * degree_bound)
+                wls.append(cheeger * w_degree_bound)
+
+        return sum(ls), sum(wls)
 
     @staticmethod
     def get_biparite_graph(
@@ -144,12 +160,15 @@ class Ramanujan:
     @staticmethod
     def weighted_ramanujan_bounds(
         tensor: th.Tensor,
-    ) -> typ.Tuple[float, float, typ.Dict[str, typ.Any]]:
+    ) -> float:
         """Calculate the Ramanujan bound"""
         bigraph, meta = Ramanujan.get_biparite_graph(tensor)
-
-        eigs = Ramanujan.get_eig_values(bigraph)
-        return eigs[0] - eigs[-1]
+        matrix = coo_array(bigraph.cpu())
+        try:
+            adj_eigh_val, _ = sp.sparse.linalg.eigsh(matrix, k=1, which="LM")
+            return adj_eigh_val[0]
+        except TypeError:
+            return 0
 
     @staticmethod
     def get_eig_values(matrix: th.Tensor, k: int = 3) -> typ.List[float]:
