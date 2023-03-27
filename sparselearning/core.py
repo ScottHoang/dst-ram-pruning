@@ -9,8 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-from .ramanujan import Ramanujan
-
 
 def add_sparse_args(parser):
     parser.add_argument(
@@ -145,7 +143,7 @@ class Masking(object):
             self.prune_every_k_steps = self.args.update_frequency
 
         # if self.args.ramanujan:
-        self.ram_checker = Ramanujan()
+        # self.ram_checker = Ramanujan()
 
         self.writer = writer
 
@@ -300,20 +298,20 @@ class Masking(object):
         self.death_rate_decay.step()
         self.death_rate = self.death_rate_decay.get_dr()
         self.steps += 1
+        return self._step(epoch)
 
+    def _step(self, epoch):
         if self.prune_every_k_steps is not None:
             if self.steps % self.prune_every_k_steps == 0:
-                if not self.args.ramanujan:  # not hasattr(self, "ram_checker"):
-                    self.truncate_weights()
-                else:
-                    self.iterative_truncate_weights()
-
+                self.truncate_weights()
+                self.apply_mask()
                 _, total_fired_weights = self.fired_masks_update()
                 if self.writer is not None:
                     self.writer.log_scalar(
                         "total-fired-weight", total_fired_weights, epoch
                     )
                 self.print_nonzero_counts()
+        return False
 
     def add_module(self, module, density, sparse_init="ER"):
         self.modules.append(module)
@@ -329,6 +327,7 @@ class Masking(object):
         self.remove_type(nn.BatchNorm2d)
         print("Removing 1D batch norms...")
         self.remove_type(nn.BatchNorm1d)
+
         self.init(mode=sparse_init, density=density)
 
     def remove_weight(self, name):
@@ -493,101 +492,8 @@ class Masking(object):
                 # exchanging masks
                 self.masks.pop(name)
                 self.masks[name] = new_mask.float()
-        self.calc_imdb()
-        self.apply_mask()
-
-    def iterative_truncate_weights(self, max_retry=10):
-        """for ramanujan check"""
-        names = list(self.masks.keys())
-        cnt = 0
-        while len(names) > 0 and cnt < max_retry:
-            mask_copy = {n: self.masks[n].clone() for n in names}
-            for module in self.modules:
-
-                for name, weight in module.named_parameters():
-                    if name not in names:
-                        continue
-                    mask = self.masks[name]
-                    self.name2nonzeros[name] = mask.sum().item()
-                    self.name2zeros[name] = mask.numel() - self.name2nonzeros[name]
-
-                    # death
-                    if self.death_mode == "magnitude":
-                        new_mask = self.magnitude_death(mask, weight, name)
-                    elif self.death_mode == "SET":
-                        new_mask = self.magnitude_and_negativity_death(
-                            mask, weight, name
-                        )
-                    elif self.death_mode == "Taylor_FO":
-                        new_mask = self.taylor_FO(mask, weight, name)
-                    elif self.death_mode == "threshold":
-                        new_mask = self.threshold_death(mask, weight, name)
-                    self.num_remove[name] = int(
-                        self.name2nonzeros[name] - new_mask.sum().item()
-                    )
-                    self.masks[name] = new_mask
-
-            for module in self.modules:
-                for name, weight in module.named_parameters():
-                    if name not in names:  # or name in skip_grow:
-                        continue
-                    new_mask = self.masks[name].data.byte()
-
-                    # growth
-                    if self.growth_mode == "random":
-                        new_mask = self.random_growth(name, new_mask, weight)
-
-                    if self.growth_mode == "random_unfired":
-                        new_mask = self.random_unfired_growth(name, new_mask, weight)
-
-                    elif self.growth_mode == "momentum":
-                        new_mask = self.momentum_growth(name, new_mask, weight)
-
-                    elif self.growth_mode == "gradient":
-                        new_mask = self.gradient_growth(name, new_mask, weight)
-
-                    new_nonzero = new_mask.sum().item()
-
-                    imdb, w_imdb = self.ram_checker(new_mask, weight)
-
-                    if imdb > 0:
-                        names.remove(name)
-                    else:
-                        if (
-                            w_imdb > 0 and self.ram_checker(new_mask, weight, True) > 0
-                        ):  # self.ram_checker(mask_copy[name], weight, backward=True):
-                            names.remove(name)
-                        else:
-                            new_mask = mask_copy[name]
-
-                    # exchanging masks
-                    self.masks.pop(name)
-                    self.masks[name] = new_mask.float()
-            cnt += 1
-        self.calc_imdb()
-        self.apply_mask()
-
-    def calc_imdb(self):
-        imdbs = []
-        w_imdbs = []
-        for module in self.modules:
-            for name, weight in module.named_parameters():
-                if name not in self.masks:  # or name in skip_grow:
-                    continue
-                imdb, w_imdb = self.ram_checker(self.masks[name], weight)
-
-                imdbs.append(imdb)
-                w_imdbs.append(w_imdb)
-
-                print(f"{name=} {imdb=} w_imdb={w_imdb=}")
-
-        imdb = sum(imdbs) / len(imdbs)
-        w_imdb = sum(w_imdbs) / len(imdbs)
-
-        print(f"model's characteristic {imdb=:.4f} {w_imdb=:.4f}")
-        if self.writer is not None:
-            self.writer.log_scalar("imdb", imdb, self.epoch)
-            self.writer.log_scalar("wimdb", w_imdb, self.epoch)
+        # self.calc_imdb()
+        # self.apply_mask()
 
     """
                     DEATH
