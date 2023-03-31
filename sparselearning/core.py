@@ -109,6 +109,7 @@ class Masking(object):
         threshold=0.001,
         args=None,
         writer=None,
+        **kwargs,
     ):
         growth_modes = ["random", "momentum", "momentum_neuron", "gradient"]
         if growth_mode not in growth_modes:
@@ -124,6 +125,7 @@ class Masking(object):
         self.death_rate_decay = death_rate_decay
 
         self.masks = {}
+        self.init_weights = {}
         self.modules = []
         self.names = []
         self.optimizer = optimizer
@@ -149,6 +151,9 @@ class Masking(object):
 
     def init(self, mode="ERK", density=0.05, erk_power_scale=1.0):
         self.density = density
+
+        # saving anchor point
+
         if mode == "GMP":
             self.baseline_nonzero = 0
             for module in self.modules:
@@ -272,7 +277,7 @@ class Masking(object):
                 total_nonzero += density_dict[name] * mask.numel()
             print(f"Overall sparsity {total_nonzero / total_params}")
 
-        self.apply_mask()
+        self.apply_mask(new_mask=True)
         self.fired_masks = copy.deepcopy(self.masks)  # used for ITOP
         # self.print_nonzero_counts()
 
@@ -304,7 +309,7 @@ class Masking(object):
         if self.prune_every_k_steps is not None:
             if self.steps % self.prune_every_k_steps == 0:
                 self.truncate_weights()
-                self.apply_mask()
+                self.apply_mask(True)
                 _, total_fired_weights = self.fired_masks_update()
                 if self.writer is not None:
                     self.writer.log_scalar(
@@ -379,17 +384,28 @@ class Masking(object):
                 if isinstance(module, nn_type):
                     self.remove_weight(name)
 
-    def apply_mask(self):
+    def apply_mask(self, new_mask=False):
         for module in self.modules:
             for name, tensor in module.named_parameters():
                 if name in self.masks:
-                    tensor.data = tensor.data * self.masks[name]
+                    tensor.data = self._apply_mask(
+                        tensor.data, self.init_weights[name], self.masks[name], new_mask
+                    )
                     # reset momentum
                     if "momentum_buffer" in self.optimizer.state[tensor]:
                         self.optimizer.state[tensor]["momentum_buffer"] = (
                             self.optimizer.state[tensor]["momentum_buffer"]
                             * self.masks[name]
                         )
+
+    @staticmethod
+    def _apply_mask(weights, anchors, mask, is_new):
+        weights = weights * mask
+        if is_new:
+            init_weights = anchors * (weights == 0.0).float()
+            init_weights = init_weights * mask
+            weights = weights + init_weights
+        return weights
 
     def truncate_weights_GMP(self, epoch):
         """
@@ -445,53 +461,73 @@ class Masking(object):
         )
 
     def truncate_weights(self):
+        targets = self.masks.keys()
+        (
+            self.masks,
+            self.num_remove,
+            self.name2zeros,
+            self.name2nonzeros,
+        ) = self._truncate_weights(targets)
+
+    def _truncate_weights(self, targets):
+        name2nonzeros = {}
+        name2zeros = {}
+        new_masks = {}
+        num_remove = {}
+
         for module in self.modules:
             for name, weight in module.named_parameters():
-                if name not in self.masks:
+                if name not in targets:
                     continue
+
                 mask = self.masks[name].clone()
-                self.name2nonzeros[name] = mask.sum().item()
-                self.name2zeros[name] = mask.numel() - self.name2nonzeros[name]
+                name2nonzeros[name] = mask.sum().item()
+                name2zeros[name] = mask.numel() - name2nonzeros[name]
 
                 # death
+                args = (mask, weight, name)
+                kwargs = {"name2zeros": name2zeros, "name2nonzeros": name2nonzeros}
                 if self.death_mode == "magnitude":
-                    new_mask = self.magnitude_death(mask, weight, name)
+                    new_mask = self.magnitude_death(*args, **kwargs)
                 elif self.death_mode == "SET":
-                    new_mask = self.magnitude_and_negativity_death(mask, weight, name)
+                    new_mask = self.magnitude_and_negativity_death(*args, **kwargs)
                 elif self.death_mode == "Taylor_FO":
-                    new_mask = self.taylor_FO(mask, weight, name)
+                    new_mask = self.taylor_FO(*args, **kwargs)
                 elif self.death_mode == "threshold":
-                    new_mask = self.threshold_death(mask, weight, name)
+                    new_mask = self.threshold_death(*args, **kwargs)
 
-                self.num_remove[name] = int(
-                    self.name2nonzeros[name] - new_mask.sum().item()
-                )
-                self.masks[name] = new_mask
+                num_remove[name] = int(name2nonzeros[name] - new_mask.sum().item())
+                new_masks[name] = new_mask
 
         for module in self.modules:
             for name, weight in module.named_parameters():
-                if name not in self.masks:  # or name in skip_grow:
+                if name not in targets:  # or name in skip_grow:
                     continue
-                new_mask = self.masks[name].data.byte()
+                new_mask = new_masks[name].data.byte()
 
                 # growth
+                args = (name, new_mask, weight)
+                kwargs = {"num_remove": num_remove}
                 if self.growth_mode == "random":
-                    new_mask = self.random_growth(name, new_mask, weight)
+                    new_mask = self.random_growth(*args, **kwargs)
 
                 if self.growth_mode == "random_unfired":
-                    new_mask = self.random_unfired_growth(name, new_mask, weight)
+                    new_mask = self.random_unfired_growth(*args, **kwargs)
 
                 elif self.growth_mode == "momentum":
-                    new_mask = self.momentum_growth(name, new_mask, weight)
+                    new_mask = self.momentum_growth(*args, **kwargs)
 
                 elif self.growth_mode == "gradient":
-                    new_mask = self.gradient_growth(name, new_mask, weight)
+                    new_mask = self.gradient_growth(*args, **kwargs)
 
-                new_nonzero = new_mask.sum().item()
-
+                name2nonzeros[name] = new_mask.sum().item()
+                name2zeros[name] = mask.numel() - name2nonzeros[name]
                 # exchanging masks
-                self.masks.pop(name)
-                self.masks[name] = new_mask.float()
+                # new_masks.pop(name)
+                new_masks[name] = new_mask.float()
+
+        return new_masks, num_remove, name2zeros, name2nonzeros
+
         # self.calc_imdb()
         # self.apply_mask()
 
@@ -499,12 +535,12 @@ class Masking(object):
                     DEATH
     """
 
-    def threshold_death(self, mask, weight, name):
+    def threshold_death(self, mask, weight, name, **kwargs):
         return torch.abs(weight.data) > self.threshold
 
-    def taylor_FO(self, mask, weight, name):
-        num_remove = math.ceil(self.death_rate * self.name2nonzeros[name])
-        num_zeros = self.name2zeros[name]
+    def taylor_FO(self, mask, weight, name, **kwargs):
+        num_remove = math.ceil(self.death_rate * kwargs["name2nonzeros"][name])
+        num_zeros = kwargs["name2zeros"][name]
         k = math.ceil(num_zeros + num_remove)
 
         x, idx = torch.sort((weight.data * weight.grad).pow(2).flatten())
@@ -512,11 +548,11 @@ class Masking(object):
 
         return mask
 
-    def magnitude_death(self, mask, weight, name):
-        num_remove = math.ceil(self.death_rate * self.name2nonzeros[name])
+    def magnitude_death(self, mask, weight, name, **kwargs):
+        num_remove = math.ceil(self.death_rate * kwargs["name2nonzeros"][name])
         if num_remove == 0.0:
             return weight.data != 0.0
-        num_zeros = self.name2zeros[name]
+        num_zeros = kwargs["name2zeros"][name]
 
         x, idx = torch.sort(torch.abs(weight.data.view(-1)))
         n = idx.shape[0]
@@ -526,9 +562,9 @@ class Masking(object):
 
         return torch.abs(weight.data) > threshold
 
-    def magnitude_and_negativity_death(self, mask, weight, name):
-        num_remove = math.ceil(self.death_rate * self.name2nonzeros[name])
-        num_zeros = self.name2zeros[name]
+    def magnitude_and_negativity_death(self, mask, weight, name, **kwargs):
+        num_remove = math.ceil(self.death_rate * kwargs["name2nonzeros"][name])
+        num_zeros = kwargs["name2zeros"][name]
 
         # find magnitude threshold
         # remove all weights which absolute value is smaller than threshold
@@ -557,8 +593,8 @@ class Masking(object):
                     GROWTH
     """
 
-    def random_unfired_growth(self, name, new_mask, weight):
-        total_regrowth = self.num_remove[name]
+    def random_unfired_growth(self, name, new_mask, weight, **kwargs):
+        total_regrowth = kwargs["num_remove"][name]
         n = (new_mask == 0).sum().item()
         if n == 0:
             return new_mask
@@ -578,8 +614,8 @@ class Masking(object):
             new_mask = new_mask.byte() | new_weights
         return new_mask
 
-    def random_growth(self, name, new_mask, weight):
-        total_regrowth = self.num_remove[name]
+    def random_growth(self, name, new_mask, weight, **kwargs):
+        total_regrowth = kwargs["num_remove"][name]
         n = (new_mask == 0).sum().item()
         if n == 0:
             return new_mask
@@ -590,8 +626,8 @@ class Masking(object):
             new_mask_ = new_mask
         return new_mask_
 
-    def momentum_growth(self, name, new_mask, weight):
-        total_regrowth = self.num_remove[name]
+    def momentum_growth(self, name, new_mask, weight, **kwargs):
+        total_regrowth = kwargs["num_remove"][name]
         grad = self.get_momentum_for_weight(weight)
         grad = grad * (new_mask == 0).float()
         y, idx = torch.sort(torch.abs(grad).flatten(), descending=True)
@@ -599,8 +635,8 @@ class Masking(object):
 
         return new_mask
 
-    def gradient_growth(self, name, new_mask, weight):
-        total_regrowth = self.num_remove[name]
+    def gradient_growth(self, name, new_mask, weight, **kwargs):
+        total_regrowth = kwargs["num_remove"][name]
         grad = self.get_gradient_for_weights(weight)
         grad = grad * (new_mask == 0).float()
 
@@ -609,8 +645,8 @@ class Masking(object):
 
         return new_mask
 
-    def momentum_neuron_growth(self, name, new_mask, weight):
-        total_regrowth = self.num_remove[name]
+    def momentum_neuron_growth(self, name, new_mask, weight, **kwargs):
+        total_regrowth = kwargs["num_remove"][name]
         grad = self.get_momentum_for_weight(weight)
 
         M = torch.abs(grad)

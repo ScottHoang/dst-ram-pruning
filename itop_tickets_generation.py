@@ -4,6 +4,7 @@ import argparse
 import copy
 import hashlib
 import logging
+import math
 import os
 import time
 import typing as typ
@@ -56,6 +57,24 @@ models["wrn-28-2"] = (WideResNet, [28, 2, 10, 0.3])
 models["wrn-22-8"] = (WideResNet, [22, 8, 10, 0.3])
 models["wrn-16-8"] = (WideResNet, [16, 8, 10, 0.3])
 models["wrn-16-10"] = (WideResNet, [16, 10, 10, 0.3])
+
+
+def init_random(model):
+    for m in model.modules():
+        if isinstance(m, nn.Conv2d):
+            n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+            m.weight.data.normal_(0, math.sqrt(2.0 / n))
+            if m.bias is not None:
+                m.bias.data.zero_()
+        elif isinstance(m, nn.BatchNorm2d):
+            m.weight.data.fill_(0.5)
+            if m.bias is not None:
+                m.bias.data.zero_()
+        elif isinstance(m, nn.Linear):
+            m.weight.data.normal_(0, 0.01)
+            if m.bias is not None:
+                m.bias.data.zero_()
+    return model
 
 
 def setup_logger():
@@ -352,6 +371,8 @@ def main():
             cls, cls_args = models[args.model]
             model = cls(*(cls_args + [args.save_features, args.bench])).to(device)
 
+        model = init_random(model)
+
         print_and_log(model)
         print_and_log("=" * 60)
         print_and_log(args.model)
@@ -401,6 +422,9 @@ def main():
                 redistribution_mode=args.redistribution,
                 args=args,
                 writer=writer,
+                dataloader=train_loader,
+                criterion=F.nll_loss,
+                device=device,
             )
             mask.add_module(model, sparse_init=args.sparse_init, density=args.density)
 
@@ -453,6 +477,7 @@ if __name__ == "__main__":
     savedir = os.path.join(
         args.output_dir,
         f"{args.growth}+{args.death}+{ram}",
+        args.sparse_init,
         args.model,
         str(args.density),
     )

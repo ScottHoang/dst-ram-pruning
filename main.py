@@ -308,9 +308,10 @@ def main():
 
     print_and_log("\n\n")
     print_and_log("=" * 80)
-    torch.manual_seed(args.seed)
     for i in range(args.iters):
         print_and_log("\nIteration start: {0}/{1}\n".format(i + 1, args.iters))
+        args.seed = i
+        torch.manual_seed(args.seed)
 
         if args.data == "mnist":
             train_loader, valid_loader, test_loader = get_mnist_dataloaders(
@@ -456,12 +457,13 @@ if __name__ == "__main__":
     timestr = time.strftime("%Hh%Mm%Ss_on_%b_%d_%Y")
     ram = "ramanujan" if args.ramanujan else "vanilla"
     savedir = os.path.join(
-        "results",
+        args.output_dir,
         f"{args.growth}+{args.death}+{ram}",
         args.model,
         str(args.density),
         timestr,
     )
+    args.savedir = savedir
     os.makedirs(ram, exist_ok=True)
     writer = TensorboardXTracker(savedir)
     main()

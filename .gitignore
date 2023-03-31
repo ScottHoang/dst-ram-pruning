@@ -1,5 +1,6 @@
 */__pycache_/*
 */*/__pycache__/*
-_dataset/
+_dataset
 logs/
 results
+results_*

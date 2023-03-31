@@ -35,7 +35,9 @@ from sparselearning.models import VGG16
 from sparselearning.models import WideResNet
 from sparselearning.utils import get_cifar100_dataloaders
 from sparselearning.utils import get_cifar10_dataloaders
+from sparselearning.utils import get_dense_state_dict
 from sparselearning.utils import get_mnist_dataloaders
+from sparselearning.utils import get_sparse_state_dict
 from sparselearning.utils import TensorboardXTracker
 
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -70,8 +72,10 @@ def get_ramanujan_scores(model, fn=th.abs, use_grad=False):
         if m.endswith("orig"):
             num_layers += 1
 
-    scores_imdb = th.zeros(1, num_layers)
-    scores_full_imdb = th.zeros(1, num_layers)
+    score_imdb = th.zeros(1, num_layers)  # just the mask
+    score_full_imdb = th.zeros(1, num_layers)  # just the mask
+    score_weighted_imdb = th.zeros(1, num_layers)
+    score_full_weighted_imdb = th.zeros(1, num_layers)
 
     i = 0
     for name, m in model.named_modules():
@@ -87,10 +91,18 @@ def get_ramanujan_scores(model, fn=th.abs, use_grad=False):
             imdb = criteria.iterative_mean_score(mask, weight)
             full_imdb = criteria.full_graph_score(mask, weight)
 
-            scores_imdb[0, i] = imdb[1]
-            scores_full_imdb[0, i] = full_imdb[1]
+            score_weighted_imdb[0, i] = imdb[1]
+            score_imdb[0, i] = imdb[0]
+
+            score_full_weighted_imdb[0, i] = full_imdb[1]
+            score_full_imdb[0, i] = full_imdb[0]
             i += 1
-    ret = {"imdb": scores_imdb, "full_imdb": scores_full_imdb}
+    ret = {
+        "imdb": score_imdb,
+        "full_imdb": score_full_imdb,
+        "weighted_imdb": score_weighted_imdb,
+        "full_weighted_imdb": score_full_weighted_imdb,
+    }
     return ret
 
 
@@ -107,8 +119,7 @@ def generate_mask_parameters(model):
 
 def load_state_dict(file):
     data = torch.load(file)
-    for k, v in data["state_dict"].items():
-        data["state_dict"][k] = v.to_dense()
+    data["state_dict"] = get_dense_state_dict(data["state_dict"])
     return data
 
 
@@ -410,6 +421,9 @@ def main():
         num_masks.sort()
 
         for mask_no in num_masks:
+            if mask_no == -1:
+                continue  # this is init file
+
             print(f"for {seed=} number of masks {len(num_masks)}")
             #
             # print_and_log("\nIteration start: {0}/{1}\n".format(i + 1, args.iters))
@@ -474,20 +488,32 @@ def main():
                 args.savedir, f"seed_{seed}_mask_{mask_no}_step_finetune.pth"
             )
 
+            print(f"now working on {savepath}")
+            partial_characteristics, _ = generate_characteristics(
+                model,
+                osp.join(args.savedir, f"seed_{seed}_mask_{mask_no}_step_final.pth"),
+            )
+
+            if osp.exists(osp.join(args.savedir, f"seed_{seed}_mask_-1_step_init.pth")):
+                anchor_dense_weight = load_state_dict(
+                    osp.join(args.savedir, f"seed_{seed}_mask_-1_step_init.pth")
+                )["state_dict"]
+                sparse_weight = model.state_dict()
+                for k, v in sparse_weight.items():
+                    if k in anchor_dense_weight:
+                        sparse_weight[k] = anchor_dense_weight[k]
+                    elif k.endswith("_orig"):
+                        sparse_weight[k] = anchor_dense_weight[k[0:-5]]
+                model.load_state_dict(sparse_weight)
+                anchor_characteristics = get_ramanujan_scores(model)
+            else:
+                anchor_characteristics = None
+
+            initial_characteristics, discovered_epoch = generate_characteristics(
+                model,
+                osp.join(args.savedir, f"seed_{seed}_mask_{mask_no}_step_start.pth"),
+            )
             if not osp.exists(savepath) or not args.skip_exist:
-                print(f"now working on {savepath}")
-                partial_characteristics, _ = generate_characteristics(
-                    model,
-                    osp.join(
-                        args.savedir, f"seed_{seed}_mask_{mask_no}_step_final.pth"
-                    ),
-                )
-                initial_characteristics, discovered_epoch = generate_characteristics(
-                    model,
-                    osp.join(
-                        args.savedir, f"seed_{seed}_mask_{mask_no}_step_start.pth"
-                    ),
-                )
 
                 best_acc = 0.0
                 for epoch in range(1, args.epochs * args.multiplier + 1):
@@ -502,9 +528,10 @@ def main():
                         best_acc = val_acc
                         torch.save(
                             {
-                                "state_dict": model.state_dict(),
+                                "state_dict": get_sparse_state_dict(model),
                                 "initial_characteristics": initial_characteristics,
                                 "partial_characteristics": partial_characteristics,
+                                "anchor_characteristics": anchor_characteristics,
                                 "valdiation_acc": best_acc,
                                 "discovered_epoch": discovered_epoch,
                             },
@@ -521,13 +548,27 @@ def main():
             print(f"Testing model {savepath}")
             ckpt = load_state_dict(savepath)
             model.load_state_dict(ckpt["state_dict"])
-            evaluate(model, device, test_loader, is_test_set=True)
+            test_acc = evaluate(model, device, test_loader, is_test_set=True)
             try:
                 final_characteristics = get_ramanujan_scores(model)
             except:
                 final_characteristics = None
-            ckpt["final_characteristics"] = final_characteristics
-            th.save(ckpt, savepath)
+            torch.save(
+                {
+                    "state_dict": get_sparse_state_dict(model),
+                    "initial_characteristics": initial_characteristics,
+                    "partial_characteristics": partial_characteristics,
+                    "anchor_characteristics": anchor_characteristics,
+                    "final_characteristics": final_characteristics,
+                    "test_acc": test_acc,
+                    "valdiation_acc": ckpt["valdiation_acc"],
+                    "discovered_epoch": discovered_epoch,
+                },
+                savepath,
+            )
+            # ckpt["final_characteristics"] = final_characteristics
+            # ckpt["test_acc"] = test_acc
+            # th.save(ckpt, savepath)
 
 
 if __name__ == "__main__":
@@ -536,6 +577,7 @@ if __name__ == "__main__":
     savedir = os.path.join(
         args.output_dir,
         f"{args.growth}+{args.death}+{ram}",
+        args.sparse_init,
         args.model,
         str(args.density),
     )

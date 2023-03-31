@@ -352,3 +352,16 @@ class TensorboardXTracker:
 
     def close(self):
         self.writer.close()
+
+
+def get_sparse_state_dict(model):
+    state_dict = {}
+    for k, v in model.state_dict().items():
+        state_dict[k] = v.to_sparse()
+    return state_dict
+
+
+def get_dense_state_dict(state_dict):
+    for k, v in state_dict.items():
+        state_dict[k] = v.to_dense()
+    return state_dict
