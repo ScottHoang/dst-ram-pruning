@@ -389,6 +389,8 @@ def parser():
     parser.add_argument("--plateau-threshold", type=float, default=0.05)
     parser.add_argument("--skip-exist", action="store_true")
 
+    parser.add_argument("--from-init", action="store_true")
+
     # ITOP settings
     sparselearning.core.add_sparse_args(parser)
 
@@ -484,9 +486,15 @@ def main():
 
             mask = None
 
-            savepath = osp.join(
-                args.savedir, f"seed_{seed}_mask_{mask_no}_step_finetune.pth"
-            )
+            if args.from_init:
+                savepath = osp.join(
+                    args.savedir,
+                    f"seed_{seed}_mask_{mask_no}_step_initfinetune.pth",
+                )
+            else:
+                savepath = osp.join(
+                    args.savedir, f"seed_{seed}_mask_{mask_no}_step_finetune.pth"
+                )
 
             print(f"now working on {savepath}")
             partial_characteristics, _ = generate_characteristics(
@@ -494,25 +502,32 @@ def main():
                 osp.join(args.savedir, f"seed_{seed}_mask_{mask_no}_step_final.pth"),
             )
 
+            sparse_init_weight = None
             if osp.exists(osp.join(args.savedir, f"seed_{seed}_mask_-1_step_init.pth")):
                 anchor_dense_weight = load_state_dict(
                     osp.join(args.savedir, f"seed_{seed}_mask_-1_step_init.pth")
                 )["state_dict"]
-                sparse_weight = model.state_dict()
-                for k, v in sparse_weight.items():
+                sparse_init_weight = model.state_dict()
+                for k, v in sparse_init_weight.items():
                     if k in anchor_dense_weight:
-                        sparse_weight[k] = anchor_dense_weight[k]
+                        sparse_init_weight[k] = anchor_dense_weight[k]
                     elif k.endswith("_orig"):
-                        sparse_weight[k] = anchor_dense_weight[k[0:-5]]
-                model.load_state_dict(sparse_weight)
+                        sparse_init_weight[k] = anchor_dense_weight[k[0:-5]]
+                model.load_state_dict(sparse_init_weight)
                 anchor_characteristics = get_ramanujan_scores(model)
             else:
+                assert args.from_init is False
                 anchor_characteristics = None
 
             initial_characteristics, discovered_epoch = generate_characteristics(
                 model,
                 osp.join(args.savedir, f"seed_{seed}_mask_{mask_no}_step_start.pth"),
             )
+            if args.from_init:
+                assert sparse_init_weight is not None
+                print(f"loading weight from init with mask {mask_no}")
+                model.load_state_dict(sparse_init_weight)
+
             if not osp.exists(savepath) or not args.skip_exist:
 
                 best_acc = 0.0

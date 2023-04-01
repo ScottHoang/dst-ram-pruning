@@ -197,10 +197,10 @@ def create_heatmap(heatmap, title, output_dir):
 
 
 if __name__ == "__main__":
-    savedir = "results_v2/random+magnitude+vanilla/ERK/vgg-c/0.01"
-    outputdir = "anlysis/results_v2/random+magnitude+vanilla/vgg-c/ERK/0.01"
+    savedir = "results_v2/random+magnitude+vanilla/ERK/ResNet18/0.01"
+    outputdir = "anlysis/results_v2/random+magnitude+vanilla/ResNet18/ERK/0.01"
     os.makedirs(outputdir, exist_ok=True)
-    num_layers = 16
+    # num_layers = 16
     files = list(filter(lambda x: x.endswith("finetune.pth"), os.listdir(savedir)))
     seeds = set(int(x.split("_")[1]) for x in files)
     for seed in seeds:
