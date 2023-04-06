@@ -82,6 +82,7 @@ class ExtendedMasking(Masking):
         # self.name2nonzeros = collections.defaultdict(int)
         # self.name2zeros = collections.defaultdict(int)
         # self.num_remove = collections.defaultdict(int)
+        self.feed_forward_anchor_weight = kwargs.get("feed-forward", False)
 
     def init(self, *args, **kwargs):
         for module in self.modules:
@@ -246,18 +247,18 @@ class ExtendedMasking(Masking):
 
         assert current_best_ticket is not None
 
-        if self.mask_no > 0:
-            for j, target in enumerate(targets):
-                if current_best_ticket["layer_imdb"][j] < self.layer_imdb[j]:
-                    current_best_ticket["layer_imdb"][j] = self.layer_imdb[j]
-                    for key in (
-                        "num_remove",
-                        "name2zeros",
-                        "name2nonzeros",
-                        "masks",
-                    ):
-                        attr = getattr(self, key)
-                        current_best_ticket[key][target] = attr[target]
+        # if self.mask_no > 0:
+        # for j, target in enumerate(targets):
+        # if current_best_ticket["layer_imdb"][j] < self.layer_imdb[j]:
+        # current_best_ticket["layer_imdb"][j] = self.layer_imdb[j]
+        # for key in (
+        # "num_remove",
+        # "name2zeros",
+        # "name2nonzeros",
+        # "masks",
+        # ):
+        # attr = getattr(self, key)
+        # current_best_ticket[key][target] = attr[target]
 
         for k, v in current_best_ticket.items():
             setattr(self, k, v)
@@ -298,10 +299,22 @@ class ExtendedMasking(Masking):
     def save_mask(self, step: str = "start", epoch: int = 0):
         args = self.args
         state_dict = self.get_sparse_state_dict()
+        layer_fired_weights, total_fired_weights = self.fired_masks_update(
+            verbose=False
+        )
         path = os.path.join(
             args.savedir, f"seed_{args.seed}_mask_{self.mask_no}_step_{step}.pth"
         )
-        th.save({"state_dict": state_dict, "epoch": epoch, "step": self.steps}, path)
+        th.save(
+            {
+                "state_dict": state_dict,
+                "epoch": epoch,
+                "step": self.steps,
+                "layer_fired_weights": layer_fired_weights,
+                "total_fired_weights": total_fired_weights,
+            },
+            path,
+        )
 
     def is_plateau(self):
         slope, boolean = detect_plateau(
@@ -312,7 +325,11 @@ class ExtendedMasking(Masking):
         self.fired_weights_slopes.append(slope)
         return boolean
 
-    def fired_masks_update(self):
+    def pprint(self, *args, verbose=True):
+        if verbose:
+            print(*args)
+
+    def fired_masks_update(self, verbose=True):
         ntotal_fired_weights = 0.0
         ntotal_weights = 0.0
         layer_fired_weights = {}
@@ -330,20 +347,29 @@ class ExtendedMasking(Masking):
                     self.fired_masks[name].sum().item()
                 ) / float(self.fired_masks[name].numel())
 
-                print(
+                self.pprint(
                     "Layerwise percentage of the fired weights of",
                     name,
                     "is:",
                     f"{layer_fired_weights[name]:.4f} ",
                     f"imdb:{self.layer_imdb[cnt]:.4f}",
+                    verbose=verbose,
                 )
                 cnt += 1
         total_fired_weights = ntotal_fired_weights / ntotal_weights
         avg_imdb = self.layer_imdb.mean(dim=-1)
-        print("The percentage of the total fired weights is:", total_fired_weights)
-        print(f"The new average Imdb: {avg_imdb:.4f}")
-        print(f"The new angular dist: {self.angular_dist:.4f}")
+        self.pprint(
+            "The percentage of the total fired weights is:",
+            total_fired_weights,
+            verbose=verbose,
+        )
+        self.pprint(f"The new average Imdb: {avg_imdb:.4f}", verbose=verbose)
+        self.pprint(f"The new angular dist: {self.angular_dist:.4f}", verbose=verbose)
         return layer_fired_weights, total_fired_weights
+
+    def apply_mask(self, new_mask=False):
+        new_mask = new_mask and self.feed_forward_anchor_weight
+        super().apply_mask(new_mask)
 
 
 def detect_plateau(seq, window, threshold):

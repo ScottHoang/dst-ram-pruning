@@ -9,6 +9,7 @@ import os
 import time
 import typing as typ
 import warnings
+from os import path as osp
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -319,6 +320,12 @@ def parser():
     parser.add_argument("--ramanujan-soft", type=float, default=0.0)
     parser.add_argument("--plateau-window", type=int, default=5)
     parser.add_argument("--plateau-threshold", type=float, default=0.05)
+    parser.add_argument(
+        "--feed-forward",
+        action="store_true",
+        help="whether or not we will forward initial weights to new mask",
+    )
+    parser.add_argument("--disable-scheduler", action="store_true")
 
     # ITOP settings
     sparselearning.core.add_sparse_args(parser)
@@ -399,14 +406,18 @@ def main():
             print("Unknown optimizer: {0}".format(args.optimizer))
             raise Exception("Unknown optimizer.")
 
-        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer,
-            milestones=[
-                int(args.epochs / 2) * args.multiplier,
-                int(args.epochs * 3 / 4) * args.multiplier,
-            ],
-            last_epoch=-1,
-        )
+        if not args.disable_scheduler:
+            lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+                optimizer,
+                milestones=[
+                    int(args.epochs / 2) * args.multiplier,
+                    int(args.epochs * 3 / 4) * args.multiplier,
+                ],
+                last_epoch=-1,
+            )
+        else:
+            print("we are disabling lr_scheduler for this run")
+            lr_scheduler = None
 
         mask = None
         if args.sparse:
@@ -425,6 +436,7 @@ def main():
                 dataloader=train_loader,
                 criterion=F.nll_loss,
                 device=device,
+                feed_forward=args.feed_forward,
             )
             mask.add_module(model, sparse_init=args.sparse_init, density=args.density)
 
@@ -433,15 +445,16 @@ def main():
         for epoch in range(1, args.epochs * args.multiplier + 1):
             t0 = time.time()
             is_plateau = train(model, device, train_loader, optimizer, epoch, mask)
-            lr_scheduler.step()
+            if lr_scheduler is not None:
+                lr_scheduler.step()
             if args.valid_split > 0.0:
                 val_acc = evaluate(model, device, valid_loader)
                 writer.log_validation_acc(val_acc, epoch)
 
-            if val_acc > best_acc:
-                print("Saving model")
-                best_acc = val_acc
-                torch.save(model.state_dict(), os.path.join(savedir, "ckpt.pth"))
+            # if val_acc > best_acc:
+            # print("Saving model")
+            # best_acc = val_acc
+            # torch.save(model.state_dict(), os.path.join(savedir, "ckpt.pth"))
 
             print_and_log(
                 "Current learning rate: {0}. Time taken for epoch: {1:.2f} seconds.\n".format(
@@ -452,12 +465,21 @@ def main():
             if is_plateau:
                 break
 
-        # print("Testing model")
-        # model.load_state_dict(torch.load(os.path.join(savedir, "ckpt.pth")))
-        # evaluate(model, device, test_loader, is_test_set=True)
+        print("Testing model")
+        test_acc = evaluate(model, device, test_loader, is_test_set=True)
+        layer_fired_weights, total_fired_weights = mask.fired_masks_update()
+
+        torch.save(
+            {
+                "test_acc": test_acc,
+                "total_fired_weights": total_fired_weights,
+                "layer_fired_weights": layer_fired_weights,
+            },
+            osp.join(savedir, f"seed_{args.seed}_dst_final_stats.pth"),
+        )
+
         print_and_log("\nIteration end: {0}/{1}\n".format(i + 1, args.iters))
 
-        layer_fired_weights, total_fired_weights = mask.fired_masks_update()
         for name in layer_fired_weights:
             print(
                 "The final percentage of fired weights in the layer",

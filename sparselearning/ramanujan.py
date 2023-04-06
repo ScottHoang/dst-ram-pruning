@@ -251,16 +251,17 @@ class Ramanujan:
                 - avg_deg_left * meta["left_nodes"] * meta["right_nodes"] / total_nodes
             )
 
-            random_bound = (eigs[-1] ** 2 / 4 + 1) * math.sqrt(
-                meta["left_nodes"] * meta["right_nodes"]
-            ) - abs(
-                edge_index.size(-1)
-                - (avg_deg_left / meta["out_dim"])
-                * (meta["left_nodes"] * meta["right_nodes"])
-            )
-            random_bound /= meta["out_dim"] * meta["in_dim"]
+            # random_bound = (eigs[-1] ** 2 / 4 + 1) * math.sqrt(
+            # meta["left_nodes"] * meta["right_nodes"]
+            # ) - abs(
+            # edge_index.size(-1)
+            # - (avg_deg_left / meta["out_dim"])
+            # * (meta["left_nodes"] * meta["right_nodes"])
+            # )
+            # random_bound /= meta["out_dim"] * meta["in_dim"]
+            expander_mixxing /= total_nodes
         else:
-            random_bound = float("inf")
+            # random_bound = float("inf")
             degree_bound = float("inf")
             expander_mixxing = float("inf")
 

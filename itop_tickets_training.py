@@ -76,6 +76,8 @@ def get_ramanujan_scores(model, fn=th.abs, use_grad=False):
     score_full_imdb = th.zeros(1, num_layers)  # just the mask
     score_weighted_imdb = th.zeros(1, num_layers)
     score_full_weighted_imdb = th.zeros(1, num_layers)
+    score_narc = th.zeros(1, num_layers)  # just the mask
+    score_full_narc = th.zeros(1, num_layers)  # just the mask
 
     i = 0
     for name, m in model.named_modules():
@@ -93,15 +95,20 @@ def get_ramanujan_scores(model, fn=th.abs, use_grad=False):
 
             score_weighted_imdb[0, i] = imdb[1]
             score_imdb[0, i] = imdb[0]
+            score_narc[0, 1] = imdb[2]
 
             score_full_weighted_imdb[0, i] = full_imdb[1]
             score_full_imdb[0, i] = full_imdb[0]
+            score_full_narc[0, i] = full_imdb[2]
+
             i += 1
     ret = {
         "imdb": score_imdb,
         "full_imdb": score_full_imdb,
         "weighted_imdb": score_weighted_imdb,
         "full_weighted_imdb": score_full_weighted_imdb,
+        "narc": score_narc,
+        "full_narc": score_full_narc,
     }
     return ret
 
@@ -387,7 +394,8 @@ def parser():
     parser.add_argument("--ramanujan-soft", type=float, default=0.0)
     parser.add_argument("--plateau-window", type=int, default=5)
     parser.add_argument("--plateau-threshold", type=float, default=0.05)
-    parser.add_argument("--skip-exist", action="store_true")
+    parser.add_argument("--skip-exist-partial", action="store_true")
+    parser.add_argument("--skip-exist-full", action="store_true")
 
     parser.add_argument("--from-init", action="store_true")
 
@@ -419,7 +427,13 @@ def main():
     for seed in seeds:
         torch.manual_seed(args.seed)
         seed_file = list(filter(lambda x: x.split("_")[1] == seed, files))
-        num_masks = list(set(int(x.split("_")[3]) for x in seed_file))
+        num_masks = set()
+        for file in seed_file:
+            if file.split("_")[3] in ("final", "-1"):
+                continue
+            num_masks.add(int(file.split("_")[3]))
+        num_masks = list(num_masks)
+        # num_masks = list(set(int(x.split("_")[3]) for x in seed_file))
         num_masks.sort()
 
         for mask_no in num_masks:
@@ -427,6 +441,20 @@ def main():
                 continue  # this is init file
 
             print(f"for {seed=} number of masks {len(num_masks)}")
+            if args.from_init:
+                savepath = osp.join(
+                    args.savedir,
+                    f"seed_{seed}_mask_{mask_no}_step_initfinetune.pth",
+                )
+            else:
+                savepath = osp.join(
+                    args.savedir, f"seed_{seed}_mask_{mask_no}_step_finetune.pth"
+                )
+
+            if os.path.isfile(savepath) and args.skip_exist_full:
+                print(f"{savepath} exist! skipping this one completely")
+                continue
+
             #
             # print_and_log("\nIteration start: {0}/{1}\n".format(i + 1, args.iters))
 
@@ -528,7 +556,7 @@ def main():
                 print(f"loading weight from init with mask {mask_no}")
                 model.load_state_dict(sparse_init_weight)
 
-            if not osp.exists(savepath) or not args.skip_exist:
+            if not osp.exists(savepath) or not args.skip_exist_partial:
 
                 best_acc = 0.0
                 for epoch in range(1, args.epochs * args.multiplier + 1):
