@@ -47,14 +47,16 @@ def masks(module):
             yield buf
 
 
-def generate_mask_parameters(model):
+def generate_mask_parameters(model, global_mask):
     r"""Returns an iterator over models prunable parameters, yielding both the
     mask and parameter tensors.
     """
-    for module in model.modules():
+    for name, module in model.named_modules():
         if isinstance(module, (nn.Conv2d, nn.Linear)):
             mask = th.ones_like(module.weight)
             prune.CustomFromMask.apply(module, "weight", mask)
+            if global_mask is not None:
+                module.weight_mask.copy_(global_mask[f"{name}.weight"])
             yield module.weight_mask, module.weight_orig
 
 
@@ -181,7 +183,7 @@ class Rand(Pruner):
     def __init__(self, masked_parameters):
         super(Rand, self).__init__(masked_parameters)
 
-    def score(self, model, loss, dataloader, device):
+    def score(self, model, loss, dataloader, device, num_iteration=-1, **kwargs):
         for _, p in self.masked_parameters:
             self.scores[id(p)] = th.randn_like(p)
 
@@ -191,7 +193,7 @@ class SNIP(Pruner):
     def __init__(self, masked_parameters):
         super(SNIP, self).__init__(masked_parameters)
 
-    def score(self, model, loss, dataloader, device):
+    def score(self, model, loss, dataloader, device, num_iteration=-1, **kwargs):
 
         # allow masks to have gradient
         for m, _ in self.masked_parameters:
@@ -202,6 +204,8 @@ class SNIP(Pruner):
             data, target = data.to(device), target.to(device)
             output = model(data)
             loss(output, target).backward()
+            if batch_idx > num_iteration > 0:
+                break
 
         # calculate score |g * theta|
         for m, p in self.masked_parameters:
@@ -224,7 +228,7 @@ class GraSP(Pruner):
         self.temp = 200
         self.eps = 1e-10
 
-    def score(self, model, loss, dataloader, device):
+    def score(self, model, loss, dataloader, device, num_iteration=-1, **kwargs):
 
         # first gradient vector without computational graph
         stopped_grads = 0
@@ -239,6 +243,9 @@ class GraSP(Pruner):
             flatten_grads = th.cat([g.reshape(-1) for g in grads if g is not None])
             stopped_grads += flatten_grads
 
+            if batch_idx > num_iteration > 0:
+                break
+
         # second gradient vector with computational graph
         for batch_idx, (data, target) in enumerate(dataloader):
             data, target = data.to(device), target.to(device)
@@ -252,6 +259,8 @@ class GraSP(Pruner):
 
             gnorm = (stopped_grads * flatten_grads).sum()
             gnorm.backward()
+            if batch_idx > num_iteration > 0:
+                break
 
         # calculate score Hg * theta (negate to remove top percent)
         for _, p in self.masked_parameters:
@@ -269,12 +278,14 @@ class Taylor1ScorerAbs(Pruner):
     def __init__(self, masked_parameters):
         super(Taylor1ScorerAbs, self).__init__(masked_parameters)
 
-    def score(self, model, loss, dataloader, device):
+    def score(self, model, loss, dataloader, device, num_iteration=-1, **kwargs):
 
         for batch_idx, (data, target) in enumerate(dataloader):
             data, target = data.to(device), target.to(device)
             output = model(data)
             loss(output, target).backward()
+            if batch_idx > num_iteration > 0:
+                break
 
         for _, p in self.masked_parameters:
             self.scores[id(p)] = th.clone(p.grad * p).detach().abs_()
@@ -989,7 +1000,6 @@ def check_sparsity(model):
 
     for name, m in model.named_modules():
         if isinstance(m, (nn.Conv2d, nn.Linear)):
-
             sum_list = sum_list + float(m.weight_mask.nelement())
             one_sum = one_sum + float(th.sum(m.weight_mask))
     print("* remain weight = ", 100 * one_sum / sum_list, "%")

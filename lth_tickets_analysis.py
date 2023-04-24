@@ -230,10 +230,12 @@ def read(which_seed=0):
     iou_heatmap = th.zeros((number_of_masks, number_of_masks, num_layers))
     sign_heatmap = th.zeros((number_of_masks, number_of_masks, num_layers))
 
-    for mask_no in masks:
+    for mask_no, discovered_iteration in enumerate(masks):
         if mask_no == -1:
             continue
-        path = osp.join(savedir, f"seed_{which_seed}_mask_{mask_no}_step_finetune.pth")
+        path = osp.join(
+            savedir, f"seed_{which_seed}_mask_{discovered_iteration}_step_finetune.pth"
+        )
         data = th.load(path)
         weighted_init_characteristics[mask_no, 0] = data["initial_characteristics"][
             "weighted_imdb"
@@ -247,18 +249,18 @@ def read(which_seed=0):
         grad_init_characteristics[mask_no, 1] = data["initial_characteristics"][
             "full_grad_imdb"
         ]
-        weighted_partial_characteristics[mask_no, 0] = data["partial_characteristics"][
-            "weighted_imdb"
-        ]
-        weighted_partial_characteristics[mask_no, 1] = data["partial_characteristics"][
-            "full_weighted_imdb"
-        ]
-        weighted_anchor_characteristics[mask_no, 0] = data["anchor_characteristics"][
-            "weighted_imdb"
-        ]
-        weighted_anchor_characteristics[mask_no, 1] = data["anchor_characteristics"][
-            "full_weighted_imdb"
-        ]
+        # weighted_partial_characteristics[mask_no, 0] = data["partial_characteristics"][
+        # "weighted_imdb"
+        # ]
+        # weighted_partial_characteristics[mask_no, 1] = data["partial_characteristics"][
+        # "full_weighted_imdb"
+        # ]
+        # weighted_anchor_characteristics[mask_no, 0] = data["anchor_characteristics"][
+        # "weighted_imdb"
+        # ]
+        # weighted_anchor_characteristics[mask_no, 1] = data["anchor_characteristics"][
+        # "full_weighted_imdb"
+        # ]
 
         mask_characteristics[mask_no, 0] = data["initial_characteristics"]["imdb"]
         mask_characteristics[mask_no, 1] = data["initial_characteristics"]["full_imdb"]
@@ -268,32 +270,32 @@ def read(which_seed=0):
 
         all_validation_acc[mask_no] = data["valdiation_acc"]
         all_test_acc[mask_no] = data["test_acc"]
-        all_epochs[mask_no] = data["discovered_epoch"]
+        all_epochs[mask_no] = discovered_iteration  # data["discovered_epoch"]
 
     grad_init_characteristics = inf_to_zero(grad_init_characteristics)
 
-    delta_cosine_distance = batch_cosine_sim(
-        weighted_partial_characteristics, weighted_anchor_characteristics
-    )
-    delta_l2_distance = batch_l2_distance(
-        weighted_partial_characteristics, weighted_anchor_characteristics
-    )
-    delta_angular_distance = delta_cosine_distance * delta_l2_distance
+    # delta_cosine_distance = batch_cosine_sim(
+    # weighted_partial_characteristics, weighted_anchor_characteristics
+    # )
+    # delta_l2_distance = batch_l2_distance(
+    # weighted_partial_characteristics, weighted_anchor_characteristics
+    # )
+    # delta_angular_distance = delta_cosine_distance * delta_l2_distance
 
-    cosine_distance = batch_cosine_sim(
-        weighted_init_characteristics, weighted_anchor_characteristics
-    )
-    l2_distance = batch_l2_distance(
-        weighted_init_characteristics, weighted_anchor_characteristics
-    )
-    anchor_angular_distance = cosine_distance * l2_distance
+    # cosine_distance = batch_cosine_sim(
+    # weighted_init_characteristics, weighted_anchor_characteristics
+    # )
+    # l2_distance = batch_l2_distance(
+    # weighted_init_characteristics, weighted_anchor_characteristics
+    # )
+    # anchor_angular_distance = cosine_distance * l2_distance
 
     avg_masks_characteristics = mask_characteristics.mean(dim=-1)
     avg_narc_characteristics = narc_characteristics.mean(dim=-1)
 
-    # iou_heatmap = read_iou(masks, iou_heatmap, which_seed)
+    iou_heatmap = read_iou(masks, iou_heatmap, which_seed)
     # __import__("pdb").set_trace()
-    sign_heatmap = read_sign(masks, sign_heatmap, which_seed)
+    # sign_heatmap = read_sign(masks, sign_heatmap, which_seed)
 
     full_layer_wise_description = (
         th.cat((mask_characteristics, weighted_init_characteristics), dim=1)
@@ -312,23 +314,22 @@ def read(which_seed=0):
         .norm(dim=1, keepdim=True)
         .mean(dim=-1)
     )
-    print(grad_init_characteristics)
     # print(full_layer_wise_description.shape)
     # __import__("pdb").set_trace()
 
     ret = {
-        "delta": delta_angular_distance,
-        "anchor": anchor_angular_distance,
+        # "delta": delta_angular_distance,
+        # "anchor": anchor_angular_distance,
         "imdb": avg_masks_characteristics,
         "narc": avg_narc_characteristics,
         "test_acc": all_test_acc,
         "epochs": all_epochs,
         "iou_heatmap": iou_heatmap,
-        "sign_heatmap": sign_heatmap,
-        "delta_cos": delta_cosine_distance,
-        "delta_l2": delta_l2_distance,
-        "anchor_cos": cosine_distance,
-        "anchor_l2": l2_distance,
+        # "sign_heatmap": sign_heatmap,
+        # "delta_cos": delta_cosine_distance,
+        # "delta_l2": delta_l2_distance,
+        # "anchor_cos": cosine_distance,
+        # "anchor_l2": l2_distance,
         "weighted_imdb": weighted_init_characteristics.mean(dim=-1),
         "grad_imdb": grad_init_characteristics.mean(dim=-1),
         "full_layer_wise_description": full_layer_wise_description,
@@ -337,7 +338,9 @@ def read(which_seed=0):
     return ret
 
 
-def create_2d_scatter_plot(x, y, title, xtitle, ytitle, output_dir, swapaxis=False):
+def create_2d_scatter_plot(
+    x, y, title, xtitle, ytitle, output_dir, swapaxis=False, horizontal_lines=None
+):
     if swapaxis:
         x, y = y, x
         xtitle, ytitle = ytitle, xtitle
@@ -347,6 +350,10 @@ def create_2d_scatter_plot(x, y, title, xtitle, ytitle, output_dir, swapaxis=Fal
     cmap = plt.cm.get_cmap("plasma", x.size(0))
     ax.scatter(x, y, c=cmap(norm_idx), marker="o")
     ax.grid(True)
+
+    if horizontal_lines is not None:
+        for hl in horizontal_lines:
+            ax.axhline(y=hl, color="r", linestyle="-")
     # Add labels and titl
     # Save plot to file
     if not os.path.exists(output_dir):
@@ -419,7 +426,12 @@ import typing as typ
 
 
 def generate_scatter_point_series(
-    data: dict, src_key: str, exceptions: typ.List[str], outputdir: str, swapaxis=False
+    data: dict,
+    src_key: str,
+    exceptions: typ.List[str],
+    outputdir: str,
+    swapaxis=False,
+    hlines=None,
 ):
     assert src_key in data
     outputdir = osp.join(outputdir, f"{src_key}_vs")
@@ -440,6 +452,7 @@ def generate_scatter_point_series(
                     ytitle=k,
                     output_dir=outputdir,
                     swapaxis=swapaxis,
+                    horizontal_lines=hlines,
                 )
             else:
                 assert shape[-1] == 2
@@ -451,6 +464,7 @@ def generate_scatter_point_series(
                     ytitle=f"{k}-{subtitle[0]}",
                     output_dir=outputdir,
                     swapaxis=swapaxis,
+                    horizontal_lines=hlines,
                 )
                 create_2d_scatter_plot(
                     data[src_key],
@@ -460,6 +474,7 @@ def generate_scatter_point_series(
                     ytitle=f"{k}-{subtitle[1]}",
                     output_dir=outputdir,
                     swapaxis=swapaxis,
+                    horizontal_lines=hlines,
                 )
 
 
@@ -537,23 +552,17 @@ if __name__ == "__main__":
     # num_layers = 16
     # num_layers = 21
     savedirs = [
-        "results_v1/random+magnitude+vanilla/ERK/vgg-c/0.01/",
-        "results_v1/random+magnitude+vanilla/ERK/ResNet18/0.01/",
-        "results_v1/random+magnitude+vanilla/ERK/ResNet34/0.01/",
-        # "results_v2/random+magnitude+vanilla/ERK/vgg-c/0.01/",
-        # "results_v4/random+magnitude+vanilla/ERK/vgg-c/0.01/",
-        "results_v1/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
-        # "results_v3/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
-        # "results_v2/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
-        # "results_v1/random+magnitude+vanilla/ERK/ResNet34/0.01/",
-        "results_v4/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
-        # "results_v2/random+magnitude+vanilla/ERK/ResNet34/0.01/",
-        # "results_v2/random+magnitude+ramanujan/ERK/ResNet18/0.01/",
-        # "results_v2/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
+        # "./results_lth_v1/SNIP/vgg-c/0.01",
+        # "./results_lth_v2/SNIP/vgg-c/0.01/",
+        # "./results_lth_v3/SNIP/vgg-d/0.01/",
+        # "./results_lth_v4/SNIP/vgg-d/0.01/",
+        # "./results_lth_v5/SNIP/vgg-d/0.01/",
+        # "./results_lth_v6/SNIP/vgg-d/0.01/",
+        "./results_lth_v7/SNIP/vgg-d/0.01/",
     ]
     for savedir in tqdm.tqdm(savedirs, total=len(savedirs)):
         model_type = savedir.split("/")[3]
-        if model_type == "vgg-c":
+        if model_type in ("vgg-c", "vgg-d"):
             num_layers = 16
         elif model_type == "ResNet18":
             num_layers = 21
@@ -562,7 +571,7 @@ if __name__ == "__main__":
         else:
             raise NotImplementedError
 
-        outputdir = f"analysis_v2/{savedir}"
+        outputdir = f"lth_analysis/{savedir}"
         os.makedirs(outputdir, exist_ok=True)
 
         files = list(filter(lambda x: x.endswith("_finetune.pth"), os.listdir(savedir)))
@@ -574,31 +583,37 @@ if __name__ == "__main__":
             # delta_cos, delta_l2, anchor_cos, anchor_l2 = data[7::]
             # test_acc = test_acc.squeeze()
 
-            ## epoch series
-            # print("generating epoch series")
-            # generate_scatter_point_series(
-            # data, "epochs", ["iou_heatmap", "sign_heatmap"], outputdir
-            # )
-            # ## acc series
-            # print("generating acc series")
-            # generate_scatter_point_series(
-            # data,
-            # "test_acc",
-            # ["iou_heatmap", "epochs", "sign_heatmap"],
-            # outputdir,
-            # swapaxis=True,
-            # )
+            # epoch series
+            print("generating epoch series")
+            generate_scatter_point_series(
+                data, "epochs", ["iou_heatmap", "sign_heatmap"], outputdir
+            )
+            ## acc series
+            print("generating acc series")
+            generate_scatter_point_series(
+                data,
+                "test_acc",
+                ["iou_heatmap", "epochs", "sign_heatmap"],
+                outputdir,
+                swapaxis=True,
+                hlines=[data["test_acc"][0], 0.889],
+            )
             ## imdb vs acc vs ....
             # print("generating imdb-v-acc series")
-            # generate_imdb_acc_3d_scatter_point_series(data, ["iou_heatmap"], outputdir)
+            # generate_imdb_acc_3d_scatter_point_series(
+            # data, ["iou_heatmap", "sign_heatmap"], outputdir
+            # )
 
             # # ## persepective series
             # print("generating perspective series")
-            # generate_3d_perspective_series(data, "test_acc", ["iou_heatmap"], outputdir)
-
-            # create_heatmap(
-            # data["iou_heatmap"].mean(dim=-1), "IoU mask heatmap", outputdir
+            # generate_3d_perspective_series(
+            # data, "test_acc", ["iou_heatmap", "sign_heatmap"], outputdir
             # )
+
             create_heatmap(
-                data["sign_heatmap"].mean(dim=-1), "Signage heatmap", outputdir
+                data["iou_heatmap"].mean(dim=-1), "IoU mask heatmap", outputdir
             )
+            # create_heatmap(
+            # data["sign_heatmap"].mean(dim=-1), "Signage heatmap", outputdir
+            # )
+            plt.close()

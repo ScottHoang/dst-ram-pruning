@@ -104,7 +104,6 @@ def get_ramanujan_scores(model, fn=th.abs, use_grad=False, **kwargs):
                 assert m.weight_orig.grad is not None
                 grad = m.weight_orig.grad.data
                 grad = fn(grad * mask)
-                # grad = grad * (weight != 0.0).float()
 
                 imdb = criteria.iterative_mean_score(mask, grad)
                 full_imdb = criteria.full_graph_score(mask, grad)
@@ -174,7 +173,7 @@ def generate_characteristics(model, file, **kwargs):
     if kwargs.get("use_grad", False):
         print("cumulating gradients for analysis")
         cumulate_gradients(model, **kwargs)
-    return get_ramanujan_scores(model, **kwargs), data["epoch"]
+    return get_ramanujan_scores(model, **kwargs)
 
 
 def check_sparsity(model):
@@ -399,7 +398,7 @@ def parser():
     parser.add_argument("--decay_frequency", type=int, default=25000)
     parser.add_argument("--l1", type=float, default=0.0)
     parser.add_argument("--fp16", action="store_true", help="Run in fp16 mode.")
-    parser.add_argument("--valid_split", type=float, default=0.1)
+    parser.add_argument("--valid_split", type=float, default=0.0)
     parser.add_argument("--resume", type=str)
     parser.add_argument("--start-epoch", type=int, default=1)
     parser.add_argument("--model", type=str, default="")
@@ -464,14 +463,20 @@ def main():
 
     print(f"number of seed {len(seeds)}")
 
+    file_exclusion = ["final", "-1"]
+    file_type = "start"
+    file_save_type = "finetune"
     for seed in seeds:
         torch.manual_seed(args.seed)
         seed_file = list(filter(lambda x: x.split("_")[1] == seed, files))
         num_masks = set()
         for file in seed_file:
-            if file.split("_")[3] in ("final", "-1"):
+            if file.split("_")[3] in file_exclusion:
                 continue
-            num_masks.add(int(file.split("_")[3]))
+
+            if file.split("_")[5].startswith(file_type):
+                print(file)
+                num_masks.add(int(file.split("_")[3]))
         num_masks = list(num_masks)
         # num_masks = list(set(int(x.split("_")[3]) for x in seed_file))
         num_masks.sort()
@@ -481,15 +486,9 @@ def main():
                 continue  # this is init file
 
             print(f"for {seed=} number of masks {len(num_masks)}")
-            if args.from_init:
-                savepath = osp.join(
-                    args.savedir,
-                    f"seed_{seed}_mask_{mask_no}_step_initfinetune.pth",
-                )
-            else:
-                savepath = osp.join(
-                    args.savedir, f"seed_{seed}_mask_{mask_no}_step_finetune.pth"
-                )
+            savepath = osp.join(
+                args.savedir, f"seed_{seed}_mask_{mask_no}_step_{file_save_type}.pth"
+            )
 
             if os.path.isfile(savepath) and args.skip_exist_full:
                 print(f"{savepath} exist! skipping this one completely")
@@ -565,31 +564,14 @@ def main():
                 )
 
             print(f"now working on {savepath}")
-            partial_characteristics, _ = generate_characteristics(
-                model,
-                osp.join(args.savedir, f"seed_{seed}_mask_{mask_no}_step_final.pth"),
-            )
 
             sparse_init_weight = None
-            if osp.exists(osp.join(args.savedir, f"seed_{seed}_mask_-1_step_init.pth")):
-                anchor_dense_weight = load_state_dict(
-                    osp.join(args.savedir, f"seed_{seed}_mask_-1_step_init.pth")
-                )["state_dict"]
-                sparse_init_weight = model.state_dict()
-                for k, v in sparse_init_weight.items():
-                    if k in anchor_dense_weight:
-                        sparse_init_weight[k] = anchor_dense_weight[k]
-                    elif k.endswith("_orig"):
-                        sparse_init_weight[k] = anchor_dense_weight[k[0:-5]]
-                model.load_state_dict(sparse_init_weight)
-                anchor_characteristics = get_ramanujan_scores(model)
-            else:
-                assert args.from_init is False
-                anchor_characteristics = None
 
-            initial_characteristics, discovered_epoch = generate_characteristics(
+            initial_characteristics = generate_characteristics(
                 model,
-                osp.join(args.savedir, f"seed_{seed}_mask_{mask_no}_step_start.pth"),
+                osp.join(
+                    args.savedir, f"seed_{seed}_mask_{mask_no}_step_{file_type}.pth"
+                ),
                 device=device,
                 loader=valid_loader,
                 optimizer=optimizer,
@@ -608,9 +590,10 @@ def main():
                     t0 = time.time()
                     train(model, device, train_loader, optimizer, epoch)
                     lr_scheduler.step()
-                    if args.valid_split > 0.0:
-                        val_acc = evaluate(model, device, valid_loader)
-                        writer.log_validation_acc(val_acc, epoch)
+
+                    val_acc = evaluate(model, device, valid_loader)
+                    writer.log_validation_acc(val_acc, epoch)
+
                     if val_acc > best_acc:
                         print("Saving model")
                         best_acc = val_acc
@@ -618,10 +601,7 @@ def main():
                             {
                                 "state_dict": get_sparse_state_dict(model),
                                 "initial_characteristics": initial_characteristics,
-                                "partial_characteristics": partial_characteristics,
-                                "anchor_characteristics": anchor_characteristics,
                                 "valdiation_acc": best_acc,
-                                "discovered_epoch": discovered_epoch,
                             },
                             savepath,
                         )
@@ -645,12 +625,9 @@ def main():
                 {
                     "state_dict": get_sparse_state_dict(model),
                     "initial_characteristics": initial_characteristics,
-                    "partial_characteristics": partial_characteristics,
-                    "anchor_characteristics": anchor_characteristics,
                     "final_characteristics": final_characteristics,
                     "test_acc": test_acc,
                     "valdiation_acc": ckpt["valdiation_acc"],
-                    "discovered_epoch": discovered_epoch,
                 },
                 savepath,
             )
@@ -664,12 +641,11 @@ if __name__ == "__main__":
     ram = "ramanujan" if args.ramanujan else "vanilla"
     savedir = os.path.join(
         args.output_dir,
-        f"{args.growth}+{args.death}+{ram}",
         args.sparse_init,
         args.model,
         str(args.density),
     )
     args.savedir = savedir
-    os.makedirs(ram, exist_ok=True)
+    os.makedirs(args.savedir, exist_ok=True)
     writer = TensorboardXTracker(savedir)
     main()

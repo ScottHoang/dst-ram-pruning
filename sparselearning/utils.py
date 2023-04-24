@@ -1,12 +1,56 @@
 import os
+import random
 
 import numpy as np
 import tensorboardX
 import torch
 import torch.nn.functional as F
 import torchvision
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
 from torchvision import datasets
 from torchvision import transforms
+
+
+class EvenClassSampler(torch.utils.data.Sampler):
+    def __init__(self, data_source):
+        if isinstance(data_source, DatasetSplitter):
+            self.data_source = data_source.parent_dataset
+            self.split_end = data_source.split_end
+            self.split_start = data_source.split_start
+        else:
+            self.data_source = data_source
+            self.split_end = len(data_source)
+            self.split_start = 0
+
+        self.indices_by_class = {
+            k: [] for k in range(len(np.unique(self.data_source.targets)))
+        }
+        for idx, target in enumerate(self.data_source.targets):
+            if idx >= self.split_start and idx < self.split_end:
+                self.indices_by_class[target].append(idx)
+
+    def __iter__(self):
+        for k in self.indices_by_class:
+            random.shuffle(self.indices_by_class[k])
+
+        num_classes = len(self.indices_by_class)
+        iterators = [iter(self.indices_by_class[k]) for k in range(num_classes)]
+        num_samples = sum(len(v) for v in self.indices_by_class.values())
+        for i in range(num_samples):
+            # class_idx = random.randint(0, num_classes - 1)
+            class_idx = i % num_classes
+            try:
+                yield next(iterators[class_idx])
+            except StopIteration:
+                iterators.pop(class_idx)
+                num_classes -= 1
+
+    def __len__(self):
+        return self.split_end - self.split_start
+
+
+##################
 
 
 class DatasetSplitter(torch.utils.data.Dataset):
@@ -33,7 +77,9 @@ class DatasetSplitter(torch.utils.data.Dataset):
         return self.parent_dataset[index + self.split_start]
 
 
-def get_cifar100_dataloaders(args, validation_split=0.0, max_threads=10):
+def get_cifar100_dataloaders(
+    args, validation_split=0.0, max_threads=10, shuffle=True, even_sampling=False
+):
     """Creates augmented train, validation, and test data loaders."""
     cifar_mean = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
     cifar_std = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
@@ -54,12 +100,20 @@ def get_cifar100_dataloaders(args, validation_split=0.0, max_threads=10):
             transforms.Normalize(cifar_mean, cifar_std),
         ]
     )
+    sampler = None
+    if even_sampling:
+        sampler = EvenClassSampler
 
     trainset = torchvision.datasets.CIFAR100(
         root="./data", train=True, download=True, transform=transform_train
     )
+    sampler = sampler(trainset) if sampler is not None else None
     train_loader = torch.utils.data.DataLoader(
-        trainset, batch_size=args.batch_size, shuffle=True, num_workers=2
+        trainset,
+        batch_size=args.batch_size,
+        shuffle=shuffle,
+        num_workers=2,
+        sampler=sampler,
     )
 
     testset = torchvision.datasets.CIFAR100(
@@ -72,7 +126,10 @@ def get_cifar100_dataloaders(args, validation_split=0.0, max_threads=10):
     return train_loader, test_loader, test_loader
 
 
-def get_cifar10_dataloaders(args, validation_split=0.0, max_threads=10):
+def get_cifar10_dataloaders(
+    args, validation_split=0.0, max_threads=10, shuffle=True, even_sampling=False
+):
+
     """Creates augmented train, validation, and test data loaders."""
 
     normalize = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
@@ -105,22 +162,29 @@ def get_cifar10_dataloaders(args, validation_split=0.0, max_threads=10):
         val_threads = 1
         train_threads = max_threads - 1
 
+    sampler = None
+    if even_sampling:
+        sampler = EvenClassSampler
+
     valid_loader = None
     if validation_split > 0.0:
         split = int(np.floor((1.0 - validation_split) * len(full_dataset)))
         train_dataset = DatasetSplitter(full_dataset, split_end=split)
         val_dataset = DatasetSplitter(full_dataset, split_start=split)
+        sampler = sampler(train_dataset) if sampler is not None else None
         train_loader = torch.utils.data.DataLoader(
             train_dataset,
             args.batch_size,
             num_workers=train_threads,
             pin_memory=True,
-            shuffle=True,
+            shuffle=shuffle,
+            sampler=sampler,
         )
         valid_loader = torch.utils.data.DataLoader(
             val_dataset, args.test_batch_size, num_workers=val_threads, pin_memory=True
         )
     else:
+        sampler = sampler(full_dataset) if sampler is not None else None
         train_loader = torch.utils.data.DataLoader(
             full_dataset, args.batch_size, num_workers=8, pin_memory=True, shuffle=True
         )
@@ -134,11 +198,13 @@ def get_cifar10_dataloaders(args, validation_split=0.0, max_threads=10):
         num_workers=1,
         pin_memory=True,
     )
+    if validation_split == 0.0:
+        valid_loader = test_loader
 
     return train_loader, valid_loader, test_loader
 
 
-def get_tinyimagenet_dataloaders(args, validation_split=0.0):
+def get_tinyimagenet_dataloaders(args, validation_split=-1.0):
     traindir = os.path.join(args.datadir, "train")
     valdir = os.path.join(args.datadir, "val")
     normalize = transforms.Normalize(

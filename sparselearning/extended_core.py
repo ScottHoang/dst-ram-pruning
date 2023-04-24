@@ -12,7 +12,16 @@ from .ramanujan import Ramanujan
 
 
 def prune_loop(
-    model, loss, pruner, dataloader, device, density, scope, epochs, train_mode=False
+    model,
+    loss,
+    pruner,
+    dataloader,
+    device,
+    density,
+    scope,
+    epochs,
+    train_mode=False,
+    **kwargs,
 ):
 
     # Set model to train or eval mode
@@ -21,33 +30,42 @@ def prune_loop(
         model.eval()
 
     # Prune model
-    for epoch in tqdm(range(epochs)):
-        pruner.score(model, loss, dataloader, device)
+    for epoch in range(epochs):
+        pruner.score(model, loss, dataloader, device, **kwargs)
         sparse = 1 - density ** ((epoch + 1) / epochs)
         pruner.mask(sparse, scope)
 
 
-def get_sparse_model(prunemethod, model, loss, dataloader, density, device):
-    model = copy.deepcopy(model)
+# @masking_wrapper
+def get_pai_sparse_model(
+    prunemethod, model, loss, dataloader, density, device, **kwargs
+):
     if prunemethod in ("SynFlow", "iterSNIP"):
         iteration = 100
         if prunemethod == "iterSNIP":
             prunemethod = "SNIP"
     else:
         iteration = 1
-    pruner = eval(f"prune.{prunemethod}")(prune.generate_mask_parameters(model))
-    prune_loop(
-        model,
-        loss,
-        pruner,
-        dataloader,
-        device,
-        density,
-        "global",
-        iteration,
-    )
-    prune.check_sparsity(model)
 
+    pruner = eval(f"prune.{prunemethod}")(
+        prune.generate_mask_parameters(model, kwargs.get("supernet_mask", None))
+    )
+    prune_loop(
+        model, loss, pruner, dataloader, device, density, "global", iteration, **kwargs
+    )
+    if not kwargs.get("skip_check_sparsity", False):
+        prune.check_sparsity(model)
+    return model
+
+
+def generate_sparse_masks(
+    prunemethod, model, loss, dataloader, density, device, **kwargs
+):
+    # model = args[1]
+    model = copy.deepcopy(model)
+    model = get_pai_sparse_model(
+        prunemethod, model, loss, dataloader, density, device, **kwargs
+    )
     masks = {}
     for k, v in model.state_dict().items():
         if k.endswith("_mask"):
@@ -97,10 +115,11 @@ class ExtendedMasking(Masking):
 
         if kwargs["mode"] in ("ERK", "uniform", "resume", "lottery_ticket", "GMP"):
             super().init(*args, **kwargs)
+            self.explored_masks = copy.deepcopy(self.masks)  # used for Ramanujan
         else:
             assert self.dataloader is not None
             assert self.criterion is not None
-            masks = get_sparse_model(
+            masks = generate_sparse_masks(
                 kwargs["mode"],
                 self.modules[0],
                 self.criterion,
@@ -115,6 +134,8 @@ class ExtendedMasking(Masking):
 
             self.apply_mask(new_mask=True)
             self.fired_masks = copy.deepcopy(self.masks)  # used for ITOP
+            self.explored_masks = copy.deepcopy(self.masks)  # used for Ramanujan
+            # __import__("pdb").set_trace()
             # self.print_nonzero_counts()
 
             total_size = 0
@@ -131,7 +152,6 @@ class ExtendedMasking(Masking):
                     self.density, sparse_size / total_size
                 )
             )
-
         self.layer_imdb = th.zeros(len(self.masks))
         self.save_mask()
 
@@ -184,18 +204,22 @@ class ExtendedMasking(Masking):
         for module in modules:
             for name, weight in module.named_parameters():
                 if name in targets:
-                    imdb = self.ramanujan_criteria._iterative_mean_score(
-                        masks[name], masks[name]
+                    imdb = self.ramanujan_criteria.total_spectrum_measurement(
+                        masks[name], weight
                     )
                     layer_imdb[cnt] = imdb[0]  # updating layer_imdb
                     mask_density[cnt] = masks[name].sum() / masks[name].numel()
+
+                    self.explored_masks[name] = (
+                        masks[name].data.byte() | self.explored_masks[name].data.byte()
+                    )
+
                 if name in self.masks:
                     cnt += 1
 
-        layer_imdb = inf_to_zero(layer_imdb)
+        # layer_imdb = inf_to_zero(layer_imdb)
+        layer_imdb = layer_imdb
         avg_imdb = layer_imdb.mean(dim=-1)
-        # exclusion_mask = mask_density <= self.density_threshold
-        # avg_imdb = (layer_imdb * exclusion_mask).sum() / exclusion_mask.sum()
 
         return {
             "layer_imdb": layer_imdb,
@@ -332,7 +356,11 @@ class ExtendedMasking(Masking):
     def fired_masks_update(self, verbose=True):
         ntotal_fired_weights = 0.0
         ntotal_weights = 0.0
+
+        ex_ntotal_fired_weights = 0.0
+        ex_ntotal_weights = 0.0
         layer_fired_weights = {}
+        layer_explored_weights = {}
         cnt = 0
         for module in self.modules:
             for name, weight in module.named_parameters():
@@ -352,15 +380,41 @@ class ExtendedMasking(Masking):
                     name,
                     "is:",
                     f"{layer_fired_weights[name]:.4f} ",
+                    verbose=verbose,
+                )
+
+                self.explored_masks[name] = (
+                    self.masks[name].data.byte() | self.explored_masks[name].data.byte()
+                )
+
+                ex_ntotal_fired_weights += float(self.explored_masks[name].sum().item())
+                ex_ntotal_weights += float(self.explored_masks[name].numel())
+                layer_explored_weights[name] = float(
+                    self.explored_masks[name].sum().item()
+                ) / float(self.explored_masks[name].numel())
+
+                self.pprint(
+                    "Layerwise percentage of the explored weights of",
+                    name,
+                    "is:",
+                    f"{layer_explored_weights[name]:.4f} ",
                     f"imdb:{self.layer_imdb[cnt]:.4f}",
                     verbose=verbose,
                 )
+
                 cnt += 1
+
         total_fired_weights = ntotal_fired_weights / ntotal_weights
+        ex_total_fired_weights = ex_ntotal_fired_weights / ex_ntotal_weights
         avg_imdb = self.layer_imdb.mean(dim=-1)
         self.pprint(
             "The percentage of the total fired weights is:",
             total_fired_weights,
+            verbose=verbose,
+        )
+        self.pprint(
+            "The percentage of the total explored weights is:",
+            ex_total_fired_weights,
             verbose=verbose,
         )
         self.pprint(f"The new average Imdb: {avg_imdb:.4f}", verbose=verbose)

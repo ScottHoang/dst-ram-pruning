@@ -20,6 +20,11 @@ from scipy.sparse import coo_array  # type: ignore[import]
 # import cupy as cp
 
 
+def inf_to_zero(batch):
+    batch[batch == float("inf")] = 0
+    return batch
+
+
 class Ramanujan:
 
     """Ramanujan base PaI pruning approach"""
@@ -35,6 +40,25 @@ class Ramanujan:
             return self.full_graph_score(mask, weight)
         else:
             return self.iterative_mean_score(mask, weight)
+
+    def total_spectrum_measurement(
+        self, mask: th.Tensor, weight: th.Tensor, return_imdb=False
+    ):
+        mask = mask.data
+        weight = weight.data
+
+        weight = th.abs(weight * mask)
+
+        full_graph_analysis = self.full_graph_score(mask, weight)
+        iterative_graphs_analysis = self.iterative_mean_score(mask, weight)
+
+        magnitude = inf_to_zero(
+            th.tensor([*full_graph_analysis[0:2], *iterative_graphs_analysis[0:2]])
+        ).norm()
+        ret = [magnitude]
+        if return_imdb:
+            ret.append(iterative_graphs_analysis[0])
+        return ret
 
     def full_graph_score(
         self, mask: th.Tensor, weight: th.Tensor

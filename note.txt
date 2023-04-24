@@ -1,0 +1,49 @@
+random notes:
+    results_v1:
+        this folder contains the vanilla itop's run without any skip fwd
+        additionally we still use learning rate scheduler with running job
+		currently res18/34 is running
+
+    results_v2/3:
+        this folder contains ITOP's v2 with feature fwd
+	note toself; this approach is quite bad
+
+    results_v4-vanilla:
+        this is super similar to v1 however, we disable learning rate during mask generation
+            currently vgg-c (vanilla/ram) is running
+
+    results_v4-ramanujan:
+        for the ramanujan run; we are not maximizing imdb, instead we are maximizing the complete l2-graph spectrum
+            also, another note; i made a mistake where i forget to disable learning rate scheduler. so
+            results_v4's ramanujan run will obtain its mask from generator with learning rate decay
+            active.
+
+    results_lth_v1
+	using vanilla sample (none) and mini-batchsize == num_train_samples // num_mask_population to generate snip masks
+	(this method is ineffeicient and maybe(?) ineffective due to gradients being too small
+
+    results_lth_v2
+	we use uniform distribution sampler
+	mini-batch size is equal to num_unique_label * k amount
+	i accumulate for x amount of steps
+	-> this approach is quite bad. The masks underperformed by a bunch compare to lth_v1
+
+    results_lth_v3
+        reverting back to random sampling with shuffling, this time we iterative twice to obtain the gradients.
+        in this run we ran only for 200 samplings (rougly 6% param exploration) while maximizing both imdb and layer-wise spectrum criteria
+        additionally, we used the full_mask as our initial mask
+
+    results_lth_v4
+        Similar to v3/v1 we follow the same strategy to generate mask. The differences are that we
+        sample it until convergence (it seems like around 2000 iteration, 10% params for vgg-d)
+
+    results_lth_v5
+        this is garbage result
+
+    results_lth_v6
+        Very similar to results_lth_v4; however we are using representative sampling at 3 iteration
+        instead. similar result. however the probability is of getting something better than vanilla
+        is slimmer
+
+    results_lth_v7
+        (with truncating)
