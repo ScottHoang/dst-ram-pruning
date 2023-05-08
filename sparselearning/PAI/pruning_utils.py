@@ -26,6 +26,7 @@ __all__ = [
     "Mag",
     "Taylor1ScorerAbs",
     "Rand",
+    "RandGlobal",
     "SNIP",
     "GraSP",
     "check_sparsity",
@@ -139,7 +140,7 @@ class SynFlow(Pruner):
     def __init__(self, masked_parameters):
         super(SynFlow, self).__init__(masked_parameters)
 
-    def score(self, model, loss, dataloader, device):
+    def score(self, model, loss, dataloader, device, num_iteration=-1, **kwargs):
         @th.no_grad()
         def linearize(model):
             # model.double()
@@ -186,6 +187,15 @@ class Rand(Pruner):
     def score(self, model, loss, dataloader, device, num_iteration=-1, **kwargs):
         for _, p in self.masked_parameters:
             self.scores[id(p)] = th.randn_like(p)
+
+
+class RandGlobal(Pruner):
+    def __init__(self, masked_parameters):
+        super(RandGlobal, self).__init__(masked_parameters)
+
+    def score(self, model, loss, dataloader, device, num_iteration=-1, **kwargs):
+        for _, p in self.masked_parameters:
+            self.scores[id(p)] = th.rand_like(p) * p.abs()
 
 
 # Based on https://github.com/mi-lad/snip/blob/master/snip.py#L18

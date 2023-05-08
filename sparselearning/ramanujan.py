@@ -58,6 +58,7 @@ class Ramanujan:
         ret = [magnitude]
         if return_imdb:
             ret.append(iterative_graphs_analysis[0])
+            ret.append(iterative_graphs_analysis[1])
         return ret
 
     def full_graph_score(
@@ -163,9 +164,15 @@ class Ramanujan:
         mixing_lem: typ.List[float] = []
         weighted_mixing_lem: typ.List[float] = []
 
-        total_nodes = (flatten_mask.sum(dim=-1) > 0.0).float().sum() + (
-            flatten_mask.sum(dim=0) > 0.0
-        ).float().sum()
+        info = {}
+
+        info["total_left_nodes"] = (flatten_mask.sum(dim=-1) > 0.0).sum()
+        info["total_right_nodes"] = (flatten_mask.sum(dim=0) > 0.0).sum()
+        info["total_nodes"] = info["total_left_nodes"] + info["total_right_nodes"]
+
+        info["total_edges"] = flatten_mask.sum()
+        info["in_deg_avg"] = flatten_mask.sum(dim=-1).mean()
+        info["out_deg_avg"] = flatten_mask.T.sum(dim=-1).mean()
 
         for degree_out, num_nodes in degree_out_lut.items():
             if degree_out == 0 or num_nodes < 2:
@@ -173,10 +180,13 @@ class Ramanujan:
             index = fan_out_index == degree_out
             submask = flatten_mask[index].T  # out_c x in_c
             submask_weight = flatten_weight[index].T
-            degree_bound, randomness, _ = self.ramanujan_bounds(submask, total_nodes)
+
+            degree_bound, randomness, _ = self.ramanujan_bounds(
+                submask, info["total_nodes"]
+            )
 
             w_degree_bound, w_mix_lemma, _ = self.ramanujan_bounds(
-                submask_weight, total_nodes, True
+                submask_weight, info["total_nodes"], True
             )
 
             input_vertices = index.sum()

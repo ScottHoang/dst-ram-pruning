@@ -437,6 +437,13 @@ def parser():
 
     parser.add_argument("--from-init", action="store_true")
     parser.add_argument("--use-grad", action="store_true")
+    parser.add_argument("--mask-population", type=int, default=2000)
+    parser.add_argument("--mask-sampling", type=int, default=10)
+    # parser.add_argument("--batch-k", type=int, default=1)
+    parser.add_argument("--num-iteration", type=int, default=2)
+    parser.add_argument("--batchnorm-only", action="store_true")  # type=int, default=2)
+
+    parser.add_argument("--cap", type=int, default=1500)
 
     # ITOP settings
     sparselearning.core.add_sparse_args(parser)
@@ -474,7 +481,10 @@ def main():
             if file.split("_")[3] in file_exclusion:
                 continue
 
-            if file.split("_")[5].startswith(file_type):
+            if (
+                file.split("_")[5].startswith(file_type)
+                and int(file.split("_")[3]) <= args.cap
+            ):
                 print(file)
                 num_masks.add(int(file.split("_")[3]))
         num_masks = list(num_masks)
@@ -585,7 +595,15 @@ def main():
 
             if not osp.exists(savepath) or not args.skip_exist_partial:
 
-                best_acc = 0.0
+                best_acc = evaluate(model, device, valid_loader)
+                torch.save(
+                    {
+                        "state_dict": get_sparse_state_dict(model),
+                        "initial_characteristics": initial_characteristics,
+                        "valdiation_acc": best_acc,
+                    },
+                    savepath,
+                )
                 for epoch in range(1, args.epochs * args.multiplier + 1):
                     t0 = time.time()
                     train(model, device, train_loader, optimizer, epoch)
@@ -638,14 +656,13 @@ def main():
 
 if __name__ == "__main__":
     args = parser()
-    ram = "ramanujan" if args.ramanujan else "vanilla"
+    timestr = time.strftime("%Hh%Mm%Ss_on_%b_%d_%Y")
+    subdirname = f"population-{args.mask_population}_sampling-{args.mask_sampling}_iter-{args.num_iteration}"
     savedir = os.path.join(
-        args.output_dir,
-        args.sparse_init,
-        args.model,
-        str(args.density),
+        args.output_dir, args.sparse_init, args.model, str(args.density), subdirname
     )
     args.savedir = savedir
     os.makedirs(args.savedir, exist_ok=True)
-    writer = TensorboardXTracker(savedir)
+    os.makedirs(os.path.join(args.savedir, "logs"), exist_ok=True)
+    writer = TensorboardXTracker(os.path.join(savedir, "logs"))
     main()

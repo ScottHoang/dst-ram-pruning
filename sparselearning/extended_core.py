@@ -1,14 +1,29 @@
 import collections
 import copy
+import math
 import os
 
 import numpy as np
 import torch as th
+import torch.nn as nn
 from tqdm import tqdm as tqdm
 
 from .core import Masking
 from .PAI import pruning_utils as prune
 from .ramanujan import Ramanujan
+
+
+def add_noise(model):
+    for m in model.modules():
+        if isinstance(m, nn.Conv2d):
+            n = m.kernel_size[1] * m.kernel_size[1] * m.out_channels
+            noise = th.rand_like(m.weight)
+            noise.data.normal_(0, math.sqrt(2.0 / n))
+            m.weight.data.add_(noise)
+        elif isinstance(m, nn.Linear):
+            noise = th.rand_like(m.weight)
+            noise.data.normal_(0, 0.01)
+            m.weight.data.add_(noise)
 
 
 def prune_loop(
@@ -40,7 +55,10 @@ def prune_loop(
 def get_pai_sparse_model(
     prunemethod, model, loss, dataloader, density, device, **kwargs
 ):
-    if prunemethod in ("SynFlow", "iterSNIP"):
+    if prunemethod in ("iterSNIP", "SynFlow"):
+        if kwargs.get("add_noise", False):
+            add_noise(model)
+
         iteration = 100
         if prunemethod == "iterSNIP":
             prunemethod = "SNIP"

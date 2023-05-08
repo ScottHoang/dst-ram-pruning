@@ -1,6 +1,7 @@
 import os
 import os.path as osp
 
+import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
@@ -237,6 +238,9 @@ def read(which_seed=0):
             savedir, f"seed_{which_seed}_mask_{discovered_iteration}_step_finetune.pth"
         )
         data = th.load(path)
+        if "test_acc" not in data:
+            print(f"skipping {path}")
+            continue
         weighted_init_characteristics[mask_no, 0] = data["initial_characteristics"][
             "weighted_imdb"
         ]
@@ -269,10 +273,14 @@ def read(which_seed=0):
         narc_characteristics[mask_no, 1] = data["initial_characteristics"]["full_narc"]
 
         all_validation_acc[mask_no] = data["valdiation_acc"]
+        # __import__("pdb").set_trace()
         all_test_acc[mask_no] = data["test_acc"]
         all_epochs[mask_no] = discovered_iteration  # data["discovered_epoch"]
 
     grad_init_characteristics = inf_to_zero(grad_init_characteristics)
+    weighted_init_characteristics = inf_to_zero(weighted_init_characteristics)
+    mask_characteristics = inf_to_zero(mask_characteristics)
+    # __import__("pdb").set_trace()
 
     # delta_cosine_distance = batch_cosine_sim(
     # weighted_partial_characteristics, weighted_anchor_characteristics
@@ -293,7 +301,7 @@ def read(which_seed=0):
     avg_masks_characteristics = mask_characteristics.mean(dim=-1)
     avg_narc_characteristics = narc_characteristics.mean(dim=-1)
 
-    iou_heatmap = read_iou(masks, iou_heatmap, which_seed)
+    # iou_heatmap = read_iou(masks, iou_heatmap, which_seed)
     # __import__("pdb").set_trace()
     # sign_heatmap = read_sign(masks, sign_heatmap, which_seed)
 
@@ -339,26 +347,46 @@ def read(which_seed=0):
 
 
 def create_2d_scatter_plot(
-    x, y, title, xtitle, ytitle, output_dir, swapaxis=False, horizontal_lines=None
+    x,
+    y,
+    title,
+    xtitle,
+    ytitle,
+    output_dir,
+    swapaxis=False,
+    horizontal_lines=None,
+    trend_line=False,
 ):
     if swapaxis:
         x, y = y, x
         xtitle, ytitle = ytitle, xtitle
     # Create scatter plot
-    fig, ax = create_2d_blank_chart(x, y, xtitle, ytitle, 0.01, (8, 8))
+    fig, ax = create_2d_blank_chart(x, y, xtitle, ytitle, 0.05, (8, 8))
     norm_idx = np.linspace(0, 1, x.size(0))
     cmap = plt.cm.get_cmap("plasma", x.size(0))
     ax.scatter(x, y, c=cmap(norm_idx), marker="o")
     ax.grid(True)
 
     if horizontal_lines is not None:
-        for hl in horizontal_lines:
-            ax.axhline(y=hl, color="r", linestyle="-")
+        for hl, name, color in horizontal_lines:
+            ax.axhline(y=hl, linestyle="-", color=color, label=name)
     # Add labels and titl
     # Save plot to file
+    if trend_line:
+        m, b = np.polyfit(x, y, 1)
+        x_range = np.linspace(min(x), max(x), 100)
+        y_range = m * x_range + b
+        ax.plot(x_range, y_range, color="snow")
+
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     filename = os.path.join(output_dir, f"{title}.png")
+    plt.tight_layout()
+    plt.colorbar(
+        plt.cm.ScalarMappable(cmap=cmap, norm=colors.Normalize(vmin=0, vmax=x.size(0)))
+    )
+    if horizontal_lines is not None:
+        plt.legend()
     plt.savefig(filename)
 
 
@@ -432,6 +460,7 @@ def generate_scatter_point_series(
     outputdir: str,
     swapaxis=False,
     hlines=None,
+    trend_line=False,
 ):
     assert src_key in data
     outputdir = osp.join(outputdir, f"{src_key}_vs")
@@ -453,6 +482,7 @@ def generate_scatter_point_series(
                     output_dir=outputdir,
                     swapaxis=swapaxis,
                     horizontal_lines=hlines,
+                    trend_line=trend_line,
                 )
             else:
                 assert shape[-1] == 2
@@ -465,6 +495,7 @@ def generate_scatter_point_series(
                     output_dir=outputdir,
                     swapaxis=swapaxis,
                     horizontal_lines=hlines,
+                    trend_line=trend_line,
                 )
                 create_2d_scatter_plot(
                     data[src_key],
@@ -475,6 +506,7 @@ def generate_scatter_point_series(
                     output_dir=outputdir,
                     swapaxis=swapaxis,
                     horizontal_lines=hlines,
+                    trend_line=trend_line,
                 )
 
 
@@ -558,8 +590,24 @@ if __name__ == "__main__":
         # "./results_lth_v4/SNIP/vgg-d/0.01/",
         # "./results_lth_v5/SNIP/vgg-d/0.01/",
         # "./results_lth_v6/SNIP/vgg-d/0.01/",
-        "./results_lth_v7/SNIP/vgg-d/0.01/",
+        # "./results_lth_v7/SNIP/vgg-d/0.01/",
+        # "./results_lth_v8/SNIP/vgg-d/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8/GraSP/vgg-d/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8/Taylor1ScorerAbs/vgg-d/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8/ERK/vgg-d/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8/GraSP/ResNet18/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8/Taylor1ScorerAbs/ResNet18/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8/SNIP/ResNet18/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8_Wfull/SNIP/ResNet18/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8_Wpretrained/SNIP/vgg-d/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8_Wpretrained/SNIP/ResNet18/0.01/population-3000_sampling-10_iter-2/",
+        "./results_lth_v8_Wpretrained/SNIP/ResNet34/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8/SNIP/ResNet34/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8/ERK/ResNet34/0.01/population-3000_sampling-100_iter-2",
+        # "./results_lth_v8/Rand/vgg-d/0.01/population-3000_sampling-10_iter-2/",
     ]
+    lth_results = {"vgg-d": 0.889, "ResNet18": 0.8943, "ResNet34": 0.9143}
+    lth_rewind_results = {"vgg-d": 0.9136, "ResNet18": 0.9122, "ResNet34": 0.9280}
     for savedir in tqdm.tqdm(savedirs, total=len(savedirs)):
         model_type = savedir.split("/")[3]
         if model_type in ("vgg-c", "vgg-d"):
@@ -596,9 +644,14 @@ if __name__ == "__main__":
                 ["iou_heatmap", "epochs", "sign_heatmap"],
                 outputdir,
                 swapaxis=True,
-                hlines=[data["test_acc"][0], 0.889],
+                hlines=[
+                    (data["test_acc"][0], model_type, "gold"),
+                    (lth_results[model_type], "lth", "r"),
+                    (lth_rewind_results[model_type], "lth-rewind", "cyan"),
+                ],
+                # trend_line=True,
             )
-            ## imdb vs acc vs ....
+            # imdb vs acc vs ....
             # print("generating imdb-v-acc series")
             # generate_imdb_acc_3d_scatter_point_series(
             # data, ["iou_heatmap", "sign_heatmap"], outputdir
@@ -610,9 +663,9 @@ if __name__ == "__main__":
             # data, "test_acc", ["iou_heatmap", "sign_heatmap"], outputdir
             # )
 
-            create_heatmap(
-                data["iou_heatmap"].mean(dim=-1), "IoU mask heatmap", outputdir
-            )
+            # create_heatmap(
+            # data["iou_heatmap"].mean(dim=-1), "IoU mask heatmap", outputdir
+            # )
             # create_heatmap(
             # data["sign_heatmap"].mean(dim=-1), "Signage heatmap", outputdir
             # )

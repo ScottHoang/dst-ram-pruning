@@ -71,7 +71,7 @@ models["wrn-16-10"] = (WideResNet, [16, 10, 10, 0.3])
 def init_random(model):
     for m in model.modules():
         if isinstance(m, nn.Conv2d):
-            n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+            n = m.kernel_size[1] * m.kernel_size[1] * m.out_channels
             m.weight.data.normal_(0, math.sqrt(2.0 / n))
             if m.bias is not None:
                 m.bias.data.zero_()
@@ -334,10 +334,10 @@ def parser():
     )
     parser.add_argument("--mask-population", type=int, default=2000)
     parser.add_argument("--mask-sampling", type=int, default=10)
-    # parser.add_argument("--batch-k", type=int, default=1)
     parser.add_argument("--num-iteration", type=int, default=2)
-    # parser.add_argument("--max-supernet-iteration", type=int, default=1000)
-    # parser.add_argument("--reset-iteration", type=int, default=100)
+    parser.add_argument("--pretrained", action="store_true")
+    parser.add_argument("--pretrained-iter", type=int, default=500)
+    parser.add_argument("--strict", action="store_true")
 
     # ITOP settings
     sparselearning.core.add_sparse_args(parser)
@@ -386,6 +386,7 @@ def generate_ticket_criteria(
     # layer_imdb = {}
     target = len(masks)
     layer_imdb = th.zeros(target).cuda()
+    layer_wimdb = th.zeros(target).cuda()
     layer_full_spectrum = th.zeros(target).cuda()
     mask_density = th.zeros(target).cuda()
     ramanujan_criteria = Ramanujan()
@@ -403,6 +404,7 @@ def generate_ticket_criteria(
         )
         # imdb = ramanujan_criteria(mask, weight)
         layer_imdb[cnt] = full_spectrum[1]  # updating layer_imdb
+        layer_wimdb[cnt] = full_spectrum[2]  # updating layer_imdb
         layer_full_spectrum[cnt] = full_spectrum[0]  # updating layer_imdb
         mask_density[cnt] = masks[name].sum() / masks[name].numel()
 
@@ -416,16 +418,19 @@ def generate_ticket_criteria(
     # print(mask_density)
 
     layer_imdb = inf_to_zero(layer_imdb)
+    layer_wimdb = inf_to_zero(layer_wimdb)
     avg_imdb = layer_imdb.mean(dim=-1)
+    avg_wimdb = layer_wimdb.mean(dim=-1)
 
     return {
         "layer_imdb": layer_imdb,
+        "layer_wimdb": layer_wimdb,
         "layer_full_spectrum": layer_full_spectrum,
+        "avg_wimdb": avg_wimdb,
         "avg_imdb": avg_imdb,
         "mask_density": mask_density,
-        "explored_masks": explored_masks,
         "masks": masks,
-    }
+    }, explored_masks
 
 
 def inf_to_zero(batch):
@@ -443,6 +448,9 @@ def main():
 
     use_cuda = not args.no_cuda and torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
+    noise_scaler = 1e-3
+    if args.model == "ResNet34":
+        noise_scaler = 1e-6
 
     print_and_log("\n\n")
     print_and_log("=" * 80)
@@ -511,7 +519,14 @@ def main():
             cls, cls_args = models[args.model]
             model = cls(*(cls_args + [args.save_features, args.bench])).to(device)
 
-        model = init_random(model)
+        if args.pretrained:
+            path = osp.join(
+                "pretraining", args.model, f"seed_0_iter_{args.pretrained_iter}.pth"
+            )
+            print("loading pretrained weights from ", path)
+            model.load_state_dict(torch.load(path)["state_dict"])
+        else:
+            model = init_random(model)
 
         masks = generate_sparse_masks(
             args.sparse_init,
@@ -521,7 +536,7 @@ def main():
             args.density,
             device,
         )
-        ticket = generate_ticket_criteria(masks, model, None)
+        ticket, explored_masks = generate_ticket_criteria(masks, model, None)
         state_dict = get_sparse_state_dict(model.state_dict(), masks)
         th.save(
             {"state_dict": state_dict},
@@ -529,7 +544,7 @@ def main():
         )
         print(
             f"{args.sparse_init} full: imdb {ticket['layer_imdb'].mean()} \
-              spectrum {ticket['layer_full_spectrum'].mean()}"
+        spectrum {ticket['layer_full_spectrum'].mean()}"
         )
 
         best_ticket = ticket  # we keep full data ticket
@@ -545,43 +560,47 @@ def main():
                 args.density,
                 device,
                 num_iteration=args.num_iteration,
-                supernet_mask=persisted_mask,
+                supernet_mask=None,
                 skip_check_sparsity=True,
+                add_noise=True,  # SynFlow specific
+                noise_scaler=noise_scaler,  # SynFlow specific,
             )
             targets = masks.keys()
-            ticket = generate_ticket_criteria(
-                masks, model, best_ticket.get("explored_masks", None)
+            ticket, explored_masks = generate_ticket_criteria(
+                masks, model, explored_masks
             )
             if len(best_ticket.keys()) == 0:
                 best_ticket = ticket
                 save_flag = True
             else:
                 for j, target in enumerate(targets):
-                    if (
+                    loose_condition = (
                         ticket["layer_imdb"][j] >= best_ticket["layer_imdb"][j]
                         and ticket["layer_full_spectrum"][j]
                         >= best_ticket["layer_full_spectrum"][j]
+                    )
+                    strict_condition = (
+                        loose_condition
+                        and ticket["layer_wimdb"][j] <= best_ticket["layer_wimdb"][j]
+                    )
+                    if (args.strict and strict_condition) or (
+                        not args.strict and loose_condition
                     ):
                         best_ticket["layer_imdb"][j] = ticket["layer_imdb"][j]
+                        best_ticket["layer_wimdb"][j] = ticket["layer_wimdb"][j]
                         best_ticket["layer_full_spectrum"][j] = ticket[
                             "layer_full_spectrum"
                         ][j]
                         best_ticket["masks"][target] = ticket["masks"][target]
                         save_flag = True
+
                         # best_ticket["mask_density"][j] = ticket["masks_density"][j]
             state_dict = get_sparse_state_dict(model.state_dict(), best_ticket["masks"])
-            total_explored = sum(
-                v.sum() for k, v in best_ticket["explored_masks"].items()
-            )
-            total_params = sum(
-                v.numel() for k, v in best_ticket["explored_masks"].items()
-            )
-            total_explored = sum(
-                v.sum() for k, v in best_ticket["explored_masks"].items()
-            )
-            total_params = sum(
-                v.numel() for k, v in best_ticket["explored_masks"].items()
-            )
+
+            total_explored = sum(v.sum() for k, v in explored_masks.items())
+            total_params = sum(v.numel() for k, v in explored_masks.items())
+            total_explored = sum(v.sum() for k, v in explored_masks.items())
+            total_params = sum(v.numel() for k, v in explored_masks.items())
 
             density = 0
             total = 0
@@ -590,13 +609,15 @@ def main():
                 total += v.numel()
 
             avg_imdb = best_ticket["layer_imdb"].mean(dim=-1)
+            avg_wimdb = best_ticket["layer_wimdb"].mean(dim=-1)
             avg_spec = best_ticket["layer_full_spectrum"].mean(dim=-1)
             explored = total_explored / total_params * 100
             current_density = density / total * 100
 
             print(
                 f"mask_no {mask_no}|"
-                f" imdb {avg_imdb:.4f}| spect. {avg_spec:.4f}| expl. {explored:.2f}%|"
+                f" imdb {avg_imdb:.4f}| wimdb {avg_wimdb:.4f}|"
+                f" spect. {avg_spec:.4f}| expl. {explored:.2f}%|"
                 f" density = {current_density:.2f}%|"
                 f" last-saved: {last_saved}| to-save: {save_flag}"
             )
@@ -604,7 +625,7 @@ def main():
             if mask_no % args.mask_sampling == 0:
                 if save_flag:
                     th.save(
-                        {"state_dict": state_dict},
+                        {"state_dict": state_dict, "explored": explored},
                         osp.join(
                             savedir, f"seed_{args.seed}_mask_{mask_no}_step_start.pth"
                         ),

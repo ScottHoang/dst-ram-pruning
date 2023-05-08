@@ -421,10 +421,17 @@ class TensorboardXTracker:
 
 
 def get_sparse_state_dict(model):
-    state_dict = {}
-    for k, v in model.state_dict().items():
-        state_dict[k] = v.to_sparse()
-    return state_dict
+    _state_dict = {}
+    state_dict = model.state_dict()
+    for k, v in state_dict.items():
+        if k.endswith("weight_orig"):
+            mask = state_dict[k.replace("orig", "mask")]
+            _state_dict[k] = (v * mask).to_sparse()
+        elif k.endswith("weight_mask"):
+            _state_dict[k] = v.to_sparse()
+        else:
+            _state_dict[k] = v
+    return _state_dict
 
 
 def get_dense_state_dict(state_dict):
