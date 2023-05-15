@@ -6,6 +6,9 @@ import tensorboardX
 import torch
 import torch.nn.functional as F
 import torchvision
+from timm.data import create_transform
+from timm.data.constants import IMAGENET_DEFAULT_MEAN
+from timm.data.constants import IMAGENET_DEFAULT_STD
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 from torchvision import datasets
@@ -255,6 +258,88 @@ def get_tinyimagenet_dataloaders(args, validation_split=-1.0):
         pin_memory=True,
     )
     return train_loader, val_loader
+
+
+def get_imagenet_dataloaders(args, validation_split=-1.0):
+    traindir = os.path.join("imagenet", "train")
+    valdir = os.path.join("imagenet", "val")
+
+    data_transform_train = create_transform(
+        input_size=224,
+        is_training=True,
+        color_jitter=0.3,
+        auto_augment="rand-m9-mstd0.5-inc1",
+    )
+    data_transform_val = create_transform(input_size=224, is_training=False)
+
+    train_dataset = datasets.ImageFolder(
+        traindir,
+        data_transform_train,
+    )
+
+    # if args.distributed:
+    # train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    # else:
+    train_sampler = None
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=(train_sampler is None),
+        num_workers=10,
+        pin_memory=True,
+        sampler=train_sampler,
+    )
+
+    val_loader = torch.utils.data.DataLoader(
+        datasets.ImageFolder(valdir, data_transform_val),
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=8,
+        pin_memory=True,
+    )
+    return train_loader, val_loader, val_loader
+
+
+def get_imagenet100_dataloaders(args, validation_split=-1.0):
+    traindir = os.path.join("imagenet100", "train")
+    valdir = os.path.join("imagenet100", "val")
+
+    data_transform_train = create_transform(
+        input_size=224,
+        is_training=True,
+        color_jitter=0.3,
+        auto_augment=None,
+    )
+    data_transform_val = create_transform(input_size=224, is_training=False)
+
+    train_dataset = datasets.ImageFolder(
+        traindir,
+        data_transform_train,
+    )
+
+    # if args.distributed:
+    # train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    # else:
+    train_sampler = None
+
+    train_loader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=(train_sampler is None),
+        num_workers=4,
+        pin_memory=True,
+        sampler=train_sampler,
+    )
+
+    val_loader = torch.utils.data.DataLoader(
+        datasets.ImageFolder(valdir, data_transform_val),
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=2,
+        pin_memory=True,
+    )
+    return train_loader, val_loader, val_loader
 
 
 def get_mnist_dataloaders(args, validation_split=0.0):

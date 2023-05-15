@@ -59,14 +59,16 @@ def get_pai_sparse_model(
         if kwargs.get("add_noise", False):
             add_noise(model)
 
-        iteration = 100
+        iteration = 10
         if prunemethod == "iterSNIP":
             prunemethod = "SNIP"
     else:
         iteration = 1
 
     pruner = eval(f"prune.{prunemethod}")(
-        prune.generate_mask_parameters(model, kwargs.get("supernet_mask", None))
+        prune.generate_mask_parameters(
+            model, kwargs.get("supernet_mask", None), kwargs.get("exception", None)
+        )
     )
     prune_loop(
         model, loss, pruner, dataloader, device, density, "global", iteration, **kwargs

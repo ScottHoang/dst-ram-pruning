@@ -36,6 +36,7 @@ from sparselearning.models import WideResNet
 from sparselearning.utils import get_cifar100_dataloaders
 from sparselearning.utils import get_cifar10_dataloaders
 from sparselearning.utils import get_dense_state_dict
+from sparselearning.utils import get_imagenet100_dataloaders
 from sparselearning.utils import get_mnist_dataloaders
 from sparselearning.utils import get_sparse_state_dict
 from sparselearning.utils import TensorboardXTracker
@@ -124,11 +125,13 @@ def get_ramanujan_scores(model, fn=th.abs, use_grad=False, **kwargs):
     return ret
 
 
-def generate_mask_parameters(model):
+def generate_mask_parameters(model, exception=None):
     r"""Returns an iterator over models prunable parameters, yielding both the
     mask and parameter tensors.
     """
-    for module in model.modules():
+    for name, module in model.named_modules():
+        if exception is not None and exception in name:
+            continue
         if isinstance(module, (nn.Conv2d, nn.Linear)):
             mask = th.ones_like(module.weight)
             prune.CustomFromMask.apply(module, "weight", mask)
@@ -151,7 +154,6 @@ def cumulate_gradients(model, device, loader, optimizer, **kwargs):
 
         data, target = data.to(device), target.to(device)
         output = model(data)
-
         loss = F.nll_loss(output, target)
         train_loss += loss.item()
         pred = output.argmax(
@@ -169,19 +171,21 @@ def generate_characteristics(model, file, **kwargs):
     data = load_state_dict(file)
     state_dict = data["state_dict"]
     model.load_state_dict(state_dict)
-    check_sparsity(model)
+    check_sparsity(model, kwargs.get("exception", None))
     if kwargs.get("use_grad", False):
         print("cumulating gradients for analysis")
         cumulate_gradients(model, **kwargs)
     return get_ramanujan_scores(model, **kwargs)
 
 
-def check_sparsity(model):
+def check_sparsity(model, exception=None):
 
     sum_list = 0
     zero_sum = 0
 
     for name, m in model.named_modules():
+        if exception is not None and exception in name:
+            continue
         if isinstance(m, (nn.Conv2d, nn.Linear)):
             sum_list = sum_list + float(m.weight_mask.nelement())
             zero_sum = zero_sum + float(th.sum(m.weight_mask == 0))
@@ -223,7 +227,7 @@ def print_and_log(msg):
     logger.info(msg)
 
 
-def train(model, device, train_loader, optimizer, epoch, mask=None):
+def train(model, device, train_loader, optimizer, epoch, mask=None, scaler=None):
     model.train()
     train_loss = 0
     correct = 0
@@ -236,7 +240,6 @@ def train(model, device, train_loader, optimizer, epoch, mask=None):
             data = data.half()
         optimizer.zero_grad()
         output = model(data)
-
         loss = F.nll_loss(output, target)
 
         train_loss += loss.item()
@@ -246,15 +249,13 @@ def train(model, device, train_loader, optimizer, epoch, mask=None):
         correct += pred.eq(target.view_as(pred)).sum().item()
         n += target.shape[0]
 
-        if args.fp16:
-            optimizer.backward(loss)
-        else:
+        if not scaler:
             loss.backward()
-
-        if mask is not None:
-            plateau = mask.step(epoch)
-        else:
             optimizer.step()
+        else:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
         if batch_idx % args.log_interval == 0:
             print_and_log(
@@ -269,8 +270,6 @@ def train(model, device, train_loader, optimizer, epoch, mask=None):
                     100.0 * correct / float(n),
                 )
             )
-        if plateau:
-            break
 
     # training summary
     print_and_log(
@@ -283,7 +282,8 @@ def train(model, device, train_loader, optimizer, epoch, mask=None):
         )
     )
     writer.log_loss(train_loss / batch_idx, epoch)
-    return plateau
+
+    return False
 
 
 def evaluate(model, device, test_loader, is_test_set=False):
@@ -443,7 +443,7 @@ def parser():
     parser.add_argument("--num-iteration", type=int, default=2)
     parser.add_argument("--batchnorm-only", action="store_true")  # type=int, default=2)
 
-    parser.add_argument("--cap", type=int, default=1500)
+    parser.add_argument("--cap", type=int, default=float("inf"))
 
     # ITOP settings
     sparselearning.core.add_sparse_args(parser)
@@ -506,19 +506,33 @@ def main():
 
             #
             # print_and_log("\nIteration start: {0}/{1}\n".format(i + 1, args.iters))
-
+            exception = None
+            scaler = None
             if args.data == "mnist":
+                scaler = torch.cuda.amp.GradScaler()
                 train_loader, valid_loader, test_loader = get_mnist_dataloaders(
                     args, validation_split=args.valid_split
                 )
             elif args.data == "cifar10":
+                scaler = torch.cuda.amp.GradScaler()
                 train_loader, valid_loader, test_loader = get_cifar10_dataloaders(
                     args, args.valid_split, max_threads=args.max_threads
                 )
             elif args.data == "cifar100":
+                scaler = torch.cuda.amp.GradScaler()
                 train_loader, valid_loader, test_loader = get_cifar100_dataloaders(
                     args, args.valid_split, max_threads=args.max_threads
                 )
+
+            elif args.data == "imnet100":
+                exception = "classifier"
+                # scaler = torch.cuda.amp.GradScaler()
+                num_classes = 100
+                train_loader, valid_loader, test_loader = get_imagenet100_dataloaders(
+                    args
+                )
+                train_loader_full = train_loader
+
             if args.model not in models:
                 print(
                     "You need to select an existing model via the --model argument. Available models include: "
@@ -527,14 +541,18 @@ def main():
                     print("\t{0}".format(key))
                 raise Exception("You need to select a model")
             elif args.model == "ResNet18":
-                model = ResNet18(c=100).to(device)
+                num_classes = 100
+                model = ResNet18(c=num_classes).to(device)
             elif args.model == "ResNet34":
-                model = ResNet34(c=100).to(device)
+                num_classes = 100
+                model = ResNet34(c=num_classes).to(device)
+            elif args.model == "vgg-d":
+                num_classes = 100 if args.data == "imnet100" else 10
+                model = VGG16("D", num_classes).to(device)
             else:
-                cls, cls_args = models[args.model]
-                model = cls(*(cls_args + [args.save_features, args.bench])).to(device)
+                raise NotImplementedError
 
-            model = generate_mask_parameters(model)
+            model = generate_mask_parameters(model, exception)
             optimizer = None
             if args.optimizer == "sgd":
                 optimizer = optim.SGD(
@@ -587,6 +605,7 @@ def main():
                 optimizer=optimizer,
                 fn=th.abs,
                 use_grad=args.use_grad,
+                exception=exception,
             )
             if args.from_init:
                 assert sparse_init_weight is not None
@@ -606,7 +625,7 @@ def main():
                 )
                 for epoch in range(1, args.epochs * args.multiplier + 1):
                     t0 = time.time()
-                    train(model, device, train_loader, optimizer, epoch)
+                    train(model, device, train_loader, optimizer, epoch, scaler=scaler)
                     lr_scheduler.step()
 
                     val_acc = evaluate(model, device, valid_loader)

@@ -48,11 +48,13 @@ def masks(module):
             yield buf
 
 
-def generate_mask_parameters(model, global_mask):
+def generate_mask_parameters(model, global_mask, exception=None):
     r"""Returns an iterator over models prunable parameters, yielding both the
     mask and parameter tensors.
     """
     for name, module in model.named_modules():
+        if exception is not None and exception in name:
+            continue
         if isinstance(module, (nn.Conv2d, nn.Linear)):
             mask = th.ones_like(module.weight)
             prune.CustomFromMask.apply(module, "weight", mask)
@@ -205,6 +207,8 @@ class SNIP(Pruner):
 
     def score(self, model, loss, dataloader, device, num_iteration=-1, **kwargs):
 
+        scaler = kwargs.get("scaler", None)
+
         # allow masks to have gradient
         for m, _ in self.masked_parameters:
             m.requires_grad = True
@@ -213,7 +217,12 @@ class SNIP(Pruner):
         for batch_idx, (data, target) in enumerate(dataloader):
             data, target = data.to(device), target.to(device)
             output = model(data)
-            loss(output, target).backward()
+            _loss = loss(output, target)
+            if scaler:
+                scaler.scale(_loss).backward()
+            else:
+                _loss.backward()
+
             if batch_idx > num_iteration > 0:
                 break
 

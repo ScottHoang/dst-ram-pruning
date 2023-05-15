@@ -357,6 +357,11 @@ def create_2d_scatter_plot(
     horizontal_lines=None,
     trend_line=False,
 ):
+    if ytitle == "test_acc":
+        zero_filter = y != 0.0
+        x = x[zero_filter]
+        y = y[zero_filter]
+
     if swapaxis:
         x, y = y, x
         xtitle, ytitle = ytitle, xtitle
@@ -584,27 +589,35 @@ if __name__ == "__main__":
     # num_layers = 16
     # num_layers = 21
     savedirs = [
-        # "./results_lth_v1/SNIP/vgg-c/0.01",
-        # "./results_lth_v2/SNIP/vgg-c/0.01/",
-        # "./results_lth_v3/SNIP/vgg-d/0.01/",
-        # "./results_lth_v4/SNIP/vgg-d/0.01/",
-        # "./results_lth_v5/SNIP/vgg-d/0.01/",
-        # "./results_lth_v6/SNIP/vgg-d/0.01/",
-        # "./results_lth_v7/SNIP/vgg-d/0.01/",
-        # "./results_lth_v8/SNIP/vgg-d/0.01/population-3000_sampling-10_iter-2/",
-        # "./results_lth_v8/GraSP/vgg-d/0.01/population-3000_sampling-10_iter-2/",
-        # "./results_lth_v8/Taylor1ScorerAbs/vgg-d/0.01/population-3000_sampling-10_iter-2/",
-        # "./results_lth_v8/ERK/vgg-d/0.01/population-3000_sampling-10_iter-2/",
-        # "./results_lth_v8/GraSP/ResNet18/0.01/population-3000_sampling-10_iter-2/",
-        # "./results_lth_v8/Taylor1ScorerAbs/ResNet18/0.01/population-3000_sampling-10_iter-2/",
-        # "./results_lth_v8/SNIP/ResNet18/0.01/population-3000_sampling-10_iter-2/",
-        # "./results_lth_v8_Wfull/SNIP/ResNet18/0.01/population-3000_sampling-10_iter-2/",
-        # "./results_lth_v8_Wpretrained/SNIP/vgg-d/0.01/population-3000_sampling-10_iter-2/",
-        # "./results_lth_v8_Wpretrained/SNIP/ResNet18/0.01/population-3000_sampling-10_iter-2/",
-        "./results_lth_v8_Wpretrained/SNIP/ResNet34/0.01/population-3000_sampling-10_iter-2/",
-        # "./results_lth_v8/SNIP/ResNet34/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8/SNIP/vgg-d/0.01/population-3000_sampling-10_iter-2",
+        # "./results_lth_v8/GraSP/vgg-d/0.01/population-3000_sampling-10_iter-2",
+        # "./results_lth_v8/ERK/vgg-d/0.01/population-3000_sampling-10_iter-2",
+        # "./results_lth_v8/Rand/vgg-d/0.01/population-3000_sampling-10_iter-2",
+        # #
+        # "./results_lth_v8/SNIP/ResNet18/0.01/population-3000_sampling-10_iter-2",
+        # "./results_lth_v8/GraSP/ResNet18/0.01/population-3000_sampling-10_iter-2",
+        # "./results_lth_v8/ERK/ResNet18/0.01/population-3000_sampling-100_iter-2",
+        # "./results_lth_v8/Rand/ResNet18/0.01/population-3000_sampling-10_iter-2",
+        # #
+        # "./results_lth_v8/SNIP/ResNet34/0.01/population-3000_sampling-10_iter-2",
+        # "./results_lth_v8/GraSP/ResNet34/0.01/population-3000_sampling-10_iter-2",
         # "./results_lth_v8/ERK/ResNet34/0.01/population-3000_sampling-100_iter-2",
-        # "./results_lth_v8/Rand/vgg-d/0.01/population-3000_sampling-10_iter-2/",
+        # "./results_lth_v8/Rand/ResNet34/0.01/population-3000_sampling-100_iter-2",
+        # #
+        # "./results_lth_v8_Wpretrained/SNIP/vgg-d/0.01/population-3000_sampling-10_iter-2",
+        # "./results_lth_v8_Wpretrained/GraSP/vgg-d/0.01/population-1500_sampling-10_iter-2",
+        # "./results_lth_v8_Wpretrained/ERK/vgg-d/0.01/population-3000_sampling-100_iter-2",
+        # "./results_lth_v8_Wpretrained/Rand/vgg-d/0.01/population-3000_sampling-100_iter-2",
+        #
+        # "./results_lth_v8_Wpretrained/SNIP/ResNet18/0.01/population-3000_sampling-10_iter-2",
+        "./results_lth_v8_Wpretrained/GraSP/ResNet18/0.01/population-1000_sampling-10_iter-2",
+        # "./results_lth_v8_Wpretrained/ERK/ResNet18/0.01/population-3000_sampling-100_iter-2",
+        # "./results_lth_v8_Wpretrained/Rand/ResNet18/0.01/population-3000_sampling-100_iter-2",
+        #
+        # "./results_lth_v8_Wpretrained/SNIP/ResNet34/0.01/population-3000_sampling-10_iter-2",
+        # "./results_lth_v8_Wpretrained/GraSP/ResNet34/0.01/population-3000_sampling-10_iter-2",
+        # "./results_lth_v8_Wpretrained/ERK/ResNet34/0.01/population-3000_sampling-100_iter-2",
+        # "./results_lth_v8_Wpretrained/Rand/ResNet34/0.01/population-3000_sampling-100_iter-2",
     ]
     lth_results = {"vgg-d": 0.889, "ResNet18": 0.8943, "ResNet34": 0.9143}
     lth_rewind_results = {"vgg-d": 0.9136, "ResNet18": 0.9122, "ResNet34": 0.9280}
@@ -619,7 +632,7 @@ if __name__ == "__main__":
         else:
             raise NotImplementedError
 
-        outputdir = f"lth_analysis/{savedir}"
+        outputdir = f"lth_analysis_v2/{savedir}"
         os.makedirs(outputdir, exist_ok=True)
 
         files = list(filter(lambda x: x.endswith("_finetune.pth"), os.listdir(savedir)))
@@ -638,6 +651,7 @@ if __name__ == "__main__":
             )
             ## acc series
             print("generating acc series")
+
             generate_scatter_point_series(
                 data,
                 "test_acc",

@@ -394,6 +394,8 @@ class VGG16(nn.Module):
         self.save_features = save_features
         self.bench = None if not bench_model else SparseSpeedupBench()
 
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
+
         if config == "C" or config == "D":
             self.classifier = nn.Sequential(
                 nn.Linear(
@@ -433,6 +435,7 @@ class VGG16(nn.Module):
                 in_channels = v
         return nn.Sequential(*layers)
 
+    # @torch.cuda.amp.autocast()
     def forward(self, x):
         for layer_id, layer in enumerate(self.features):
             if self.bench is not None and isinstance(layer, nn.Conv2d):
@@ -444,7 +447,7 @@ class VGG16(nn.Module):
                 if isinstance(layer, nn.ReLU):
                     self.feats.append(x.clone().detach())
                     self.densities.append((x.data != 0.0).sum().item() / x.numel())
-
+        x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.classifier(x)
         x = F.log_softmax(x, dim=1)
@@ -785,6 +788,7 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
         self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
         self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
+        self.avgpool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Linear(512 * block.expansion, num_classes, bias=False)
 
     def _make_layer(self, block, planes, num_blocks, stride):
@@ -795,13 +799,15 @@ class ResNet(nn.Module):
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
+    # @torch.cuda.amp.autocast()
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
         out = self.layer4(out)
-        out = F.avg_pool2d(out, 4)
+        # out = F.avg_pool2d(out, 4)
+        out = self.avgpool(out)
         out = out.view(out.size(0), -1)
         out = self.classifier(out)
         out = F.log_softmax(out, dim=1)

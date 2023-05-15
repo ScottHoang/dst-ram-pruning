@@ -39,6 +39,7 @@ from sparselearning.PAI import SNIP
 from sparselearning.ramanujan import Ramanujan
 from sparselearning.utils import get_cifar100_dataloaders
 from sparselearning.utils import get_cifar10_dataloaders
+from sparselearning.utils import get_imagenet100_dataloaders
 from sparselearning.utils import get_mnist_dataloaders
 from sparselearning.utils import TensorboardXTracker
 
@@ -131,9 +132,9 @@ def train(model, device, train_loader, optimizer, epoch, mask=None):
         if args.fp16:
             data = data.half()
         optimizer.zero_grad()
-        output = model(data)
-
-        loss = F.nll_loss(output, target)
+        with th.cuda.amp.autocast():
+            output = model(data)
+            loss = F.nll_loss(output, target)
 
         train_loss += loss.item()
         pred = output.argmax(
@@ -459,6 +460,9 @@ def main():
         args.seed = i
         torch.manual_seed(args.seed)
 
+        exception = None
+        scaler = None
+
         if args.data == "mnist":
             train_loader_full, _, _ = get_mnist_dataloaders(
                 args,
@@ -473,6 +477,7 @@ def main():
                 validation_split=args.valid_split,
             )
         elif args.data == "cifar10":
+            num_classes = 10
             train_loader_full, _, _ = get_cifar10_dataloaders(
                 args,
                 args.valid_split,
@@ -490,6 +495,7 @@ def main():
                 # even_sampling=True,
             )
         elif args.data == "cifar100":
+            num_classes = 100
             train_loader_full, _, _ = get_cifar100_dataloaders(
                 args,
                 args.valid_split,
@@ -503,6 +509,12 @@ def main():
                 shuffle=True,
                 # even_sampling=True,
             )
+        elif args.data == "imnet100":
+            # scaler = th.cuda.amp.GradScaler()
+            exception = "classifier"
+            num_classes = 100
+            train_loader, valid_loader, test_loader = get_imagenet100_dataloaders(args)
+            train_loader_full = train_loader
 
         if args.model not in models:
             print(
@@ -512,22 +524,33 @@ def main():
                 print("\t{0}".format(key))
             raise Exception("You need to select a model")
         elif args.model == "ResNet18":
-            model = ResNet18(c=100).to(device)
+            num_classes = 100
+            model = ResNet18(c=num_classes).to(device)
         elif args.model == "ResNet34":
-            model = ResNet34(c=100).to(device)
+            num_classes = 100
+            model = ResNet34(c=num_classes).to(device)
+        elif args.model == "vgg-d":
+            num_classes = 100 if args.data == "imnet100" else 10
+            model = VGG16("D", num_classes).to(device)
         else:
-            cls, cls_args = models[args.model]
-            model = cls(*(cls_args + [args.save_features, args.bench])).to(device)
+            raise NotImplementedError
+
+        # else:
+        # cls, cls_args = models[args.model]
+        # model = cls(*(cls_args + [args.save_features, args.bench])).to(device)
 
         if args.pretrained:
+            folder = "pretraining_imnet" if args.data == "imnet100" else "pretraining"
             path = osp.join(
-                "pretraining", args.model, f"seed_0_iter_{args.pretrained_iter}.pth"
+                folder, args.model, f"seed_0_iter_{args.pretrained_iter}.pth"
             )
             print("loading pretrained weights from ", path)
             model.load_state_dict(torch.load(path)["state_dict"])
         else:
             model = init_random(model)
 
+        explored_masks = None
+        best_ticket = {}
         masks = generate_sparse_masks(
             args.sparse_init,
             model,
@@ -535,6 +558,9 @@ def main():
             train_loader_full,
             args.density,
             device,
+            exception=exception,
+            scaler=scaler,
+            skip_check_sparsity=True,
         )
         ticket, explored_masks = generate_ticket_criteria(masks, model, None)
         state_dict = get_sparse_state_dict(model.state_dict(), masks)
@@ -564,6 +590,8 @@ def main():
                 skip_check_sparsity=True,
                 add_noise=True,  # SynFlow specific
                 noise_scaler=noise_scaler,  # SynFlow specific,
+                exception=exception,
+                scaler=scaler,
             )
             targets = masks.keys()
             ticket, explored_masks = generate_ticket_criteria(
