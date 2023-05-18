@@ -229,6 +229,29 @@ def get_sparse_state_dict(weights, masks):
     return state_dict
 
 
+import os
+
+
+def return_latest_mask(model):
+    global savedir
+    files = list(filter(lambda x: x.endswith("start.pth"), os.listdir(savedir)))
+    if len(files):
+        files.sort(key=lambda x: int(x.split("_")[3]))
+        latest_file = files[-1]
+        print(f"resuming latest file : {latest_file}")
+        state_dict = torch.load(os.path.join(savedir, latest_file))
+        masks = {}
+        for k, v in state_dict["state_dict"].items():
+            if k.endswith("_mask"):
+                masks[k[0:-5]] = v.to_dense()
+
+        return *generate_ticket_criteria(masks, model, None), int(
+            latest_file.split("_")[3]
+        )
+    else:
+        return None, {}, 0
+
+
 def parser():
     parser = argparse.ArgumentParser(description="PyTorch MNIST Example")
 
@@ -339,6 +362,8 @@ def parser():
     parser.add_argument("--pretrained", action="store_true")
     parser.add_argument("--pretrained-iter", type=int, default=500)
     parser.add_argument("--alt", action="store_true")
+    parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--skip-exist-full", action="store_true")
 
     # ITOP settings
     sparselearning.core.add_sparse_args(parser)
@@ -533,7 +558,7 @@ def main():
             num_classes = 100
             model = ResNet34(c=num_classes).to(device)
         elif args.model == "vgg-d":
-            num_classes = 100 if args.data == "imnet100" else 10
+            num_classes = 100  # if args.data == "imnet100" else 10
             model = VGG16("D", num_classes).to(device)
         else:
             raise NotImplementedError
@@ -552,35 +577,36 @@ def main():
         else:
             model = init_random(model)
 
-        explored_masks = None
-        best_ticket = {}
-        masks = generate_sparse_masks(
-            args.sparse_init,
-            model,
-            F.nll_loss,
-            train_loader_full,
-            args.density,
-            device,
-            exception=exception,
-            scaler=scaler,
-            skip_check_sparsity=True,
-        )
-        ticket, explored_masks = generate_ticket_criteria(masks, model, None)
-        state_dict = get_sparse_state_dict(model.state_dict(), masks)
-        th.save(
-            {"state_dict": state_dict},
-            osp.join(savedir, f"seed_{args.seed}_mask_0_step_start.pth"),
-        )
-        print(
-            f"{args.sparse_init} full: imdb {ticket['layer_imdb'].mean()} \
-        spectrum {ticket['layer_full_spectrum'].mean()}"
-        )
+        best_ticket, explored_masks, start_iter = return_latest_mask(model)
 
-        best_ticket = ticket  # we keep full data ticket
+        if best_ticket is None:
+            masks = generate_sparse_masks(
+                args.sparse_init,
+                model,
+                F.nll_loss,
+                train_loader_full,
+                args.density,
+                device,
+                exception=exception,
+                scaler=scaler,
+                skip_check_sparsity=True,
+            )
+            best_ticket, explored_masks = generate_ticket_criteria(masks, model, None)
+            state_dict = get_sparse_state_dict(model.state_dict(), masks)
+            th.save(
+                {"state_dict": state_dict},
+                osp.join(savedir, f"seed_{args.seed}_mask_0_step_start.pth"),
+            )
+            print(
+                f"{args.sparse_init} full: imdb {best_ticket['layer_imdb'].mean()} \
+            spectrum {best_ticket['layer_full_spectrum'].mean()}"
+            )
+
+        # best_ticket = ticket  # we keep full data ticket
         save_flag = False
         last_saved = 0
         persisted_mask = None
-        for mask_no in range(1, args.mask_population + 1):
+        for mask_no in range(start_iter + 1, args.mask_population + 1):
             masks = generate_sparse_masks(
                 args.sparse_init,
                 model,

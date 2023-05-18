@@ -547,7 +547,7 @@ def main():
                 num_classes = 100
                 model = ResNet34(c=num_classes).to(device)
             elif args.model == "vgg-d":
-                num_classes = 100 if args.data == "imnet100" else 10
+                num_classes = 100 #if args.data == "imnet100" else 10
                 model = VGG16("D", num_classes).to(device)
             else:
                 raise NotImplementedError
