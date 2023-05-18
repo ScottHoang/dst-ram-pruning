@@ -521,6 +521,12 @@ def main():
                 model = ResNet18(c=100).to(device)
             elif args.model == "ResNet34":
                 model = ResNet34(c=100).to(device)
+            elif args.model == "ResNet34":
+                model = ResNet34(c=100).to(device)
+            elif args.model == "vgg-d":
+                num_classes = 100  # if args.data == "imnet100" else 10
+                model = VGG16("D", num_classes).to(device)
+
             else:
                 cls, cls_args = models[args.model]
                 model = cls(*(cls_args + [args.save_features, args.bench])).to(device)
