@@ -3,9 +3,6 @@ import math
 import statistics as stats
 import typing as typ
 
-import cupy as cp
-import cupyx as cpx
-import cupyx.scipy.sparse.linalg as cuspla
 import numpy as np
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
