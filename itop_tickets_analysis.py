@@ -1,22 +1,30 @@
 import os
 import os.path as osp
 
+import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+import torch
 import torch as th
 from matplotlib import cm
 from matplotlib.animation import FuncAnimation
+from matplotlib.ticker import FormatStrFormatter
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.interpolate import griddata
 from scipy.interpolate import LinearNDInterpolator
 from scipy.interpolate import RegularGridInterpolator
 
+plt.rcParams["font.size"] = 20
+# plt.rcParams["axes.labelsize"] =
+# plt.rcParams["axes.labelsize"] = 14
+# plt.rcParams["figure.autolayout"] = True
+
 
 def create_3d_blank_chart(xs, ys, zs, xtitle, ytitle, ztitle, ax_padding, plot_size):
     # my favorite styling kit
-    plt.style.use("dark_background")
+    # plt.style.use("dark_background")
     # determining the size of the graph
     fig = plt.figure(figsize=plot_size)
     # 3D mode
@@ -29,6 +37,10 @@ def create_3d_blank_chart(xs, ys, zs, xtitle, ytitle, ztitle, ax_padding, plot_s
     # ax.set_xlabel("Cosine-similarity")
     # ax.set_ylabel("L2-distance")
     # ax.set_zlabel("Accuracy")
+    ax.tick_params(axis="x", labelsize=16)
+    ax.tick_params(axis="y", labelsize=16)
+    ax.tick_params(axis="z", labelsize=16)
+
     ax.set_xlabel(xtitle)
     ax.set_ylabel(ytitle)
     ax.set_zlabel(ztitle)
@@ -36,6 +48,11 @@ def create_3d_blank_chart(xs, ys, zs, xtitle, ytitle, ztitle, ax_padding, plot_s
     ax.set_xlim3d(xs.min() - ax_padding, xs.max() + ax_padding)
     ax.set_ylim3d(ys.min() - ax_padding, ys.max() + ax_padding)
     ax.set_zlim3d(zs.min() - ax_padding, zs.max() + ax_padding)
+
+    ax.xaxis.labelpad = 20
+    ax.yaxis.labelpad = 20
+    ax.zaxis.labelpad = 20
+
     return (fig, ax)
 
 
@@ -46,20 +63,15 @@ def create_2d_blank_chart(xs, ys, xtitle, ytitle, ax_padding, plot_size):
     fig = plt.figure(figsize=plot_size)
     # 3D mode
     ax = fig.gca()
-    # transparent axis pane background
-    # ax.xaxis.pane.fill = False
-    # ax.yaxis.pane.fill = False
-    # setting chart axis names
-    # ax.set_xlabel("Cosine-similarity")
-    # ax.set_ylabel("L2-distance")
-    # ax.set_zlabel("Accuracy")
     ax.set_xlabel(xtitle)
     ax.set_ylabel(ytitle)
     # ax.set_zlabel(ztitle)
 
     ax.set_xlim(xs.min() - ax_padding, xs.max() + ax_padding)
     ax.set_ylim(ys.min() - ax_padding, ys.max() + ax_padding)
-    # ax.set_zlim3d(zs.min() - ax_padding, zs.max() + ax_padding)
+    ax.yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
+    ax.xaxis.set_major_formatter(FormatStrFormatter("%.3f"))
+
     return (fig, ax)
 
 
@@ -294,7 +306,7 @@ def read(which_seed=0):
 
     # iou_heatmap = read_iou(masks, iou_heatmap, which_seed)
     # __import__("pdb").set_trace()
-    sign_heatmap = read_sign(masks, sign_heatmap, which_seed)
+    # sign_heatmap = read_sign(masks, sign_heatmap, which_seed)
 
     full_layer_wise_description = (
         th.cat((mask_characteristics, weighted_init_characteristics), dim=1)
@@ -313,16 +325,17 @@ def read(which_seed=0):
         .norm(dim=1, keepdim=True)
         .mean(dim=-1)
     )
-    print(grad_init_characteristics)
+    # print(grad_init_characteristics)
     # print(full_layer_wise_description.shape)
     # __import__("pdb").set_trace()
+
     ret = {
-        "imdb": avg_masks_characteristics[0],
-        "db": avg_masks_characteristics[1],
-        "imsg": avg_weights_characteristics[0],
-        "sg": avg_weights_characteristics[1],
+        "Iterative_Mean_Ramanujan_Bound": avg_masks_characteristics[:, 0],
+        "Ramanujan_Bound": avg_masks_characteristics[:, 1],
+        "Iterative_Mean_Spectral_Gap": avg_weights_characteristics[:, 0],
+        "Spectral_Gap": avg_weights_characteristics[:, 1],
         "full_spectrum_l2": full_layer_wise_description,
-        "test_acc": all_test_acc,
+        "Test Acc (%)": all_test_acc * 100,
     }
 
     # ret = {
@@ -351,7 +364,10 @@ def create_2d_scatter_plot(x, y, title, xtitle, ytitle, output_dir, swapaxis=Fal
         x, y = y, x
         xtitle, ytitle = ytitle, xtitle
     # Create scatter plot
-    fig, ax = create_2d_blank_chart(x, y, xtitle, ytitle, 0.005, (8, 8))
+    if model_type == "ResNet34":
+        fig, ax = create_2d_blank_chart(x, y, xtitle, ytitle, 0.001, (11, 9))
+    else:
+        fig, ax = create_2d_blank_chart(x, y, xtitle, ytitle, 0.001, (9, 9))
     norm_idx = np.linspace(0, 1, x.size(0))
     cmap = plt.cm.get_cmap("plasma", x.size(0))
     ax.scatter(x, y, c=cmap(norm_idx), marker="o")
@@ -360,13 +376,22 @@ def create_2d_scatter_plot(x, y, title, xtitle, ytitle, output_dir, swapaxis=Fal
     # Save plot to file
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
+    if model_type == "ResNet34":
+        cbar = plt.colorbar(
+            plt.cm.ScalarMappable(
+                cmap=cmap, norm=colors.Normalize(vmin=0, vmax=x.size(0))
+            )
+        )
+        cbar.ax.get_yaxis().labelpad = 20
+        cbar.set_label("Time Step", rotation=270)
+    title = title.replace("(%)", "")
     filename = os.path.join(output_dir, f"{title}.png")
     plt.savefig(filename)
 
 
 def plot_3d_plane(x, y, z, xtitle, ytitle, ztitle, title, output_dir):
-    fig, ax = create_3d_blank_chart(x, y, z, xtitle, ytitle, ztitle, 0.001, (12, 12))
-    ax.set_title(title)
+    fig, ax = create_3d_blank_chart(x, y, z, xtitle, ytitle, ztitle, 0.001, (14, 14))
+    # ax.set_title(title)
     resolution = 100
     xi = np.linspace(x.min(), x.max(), resolution)
     yi = np.linspace(y.min(), y.max(), resolution)
@@ -377,7 +402,7 @@ def plot_3d_plane(x, y, z, xtitle, ytitle, ztitle, title, output_dir):
     norm_idx = np.linspace(0, 1, x.size(0))
     cmap = plt.cm.get_cmap("plasma", x.size(0))
 
-    ax.scatter3D(x, y, z, c=cmap(norm_idx), marker="o")
+    # ax.scatter3D(x, y, z, c=cmap(norm_idx), marker="o")
 
     ######################################
     # def setup_colorbar(fig, surf):
@@ -399,18 +424,47 @@ def plot_3d_plane(x, y, z, xtitle, ytitle, ztitle, title, output_dir):
     )
     # cbar = setup_colorbar(fig, surf)
 
-    ani = FuncAnimation(
-        fig, update_view, frames=np.arange(0, 450, 2), fargs=(ax,), interval=50
-    )
-    # filename = os.path.join(outputdir, f"{title}.png")
+    # ani = FuncAnimation(
+    # fig, update_view, frames=np.arange(0, 450, 2), fargs=(ax,), interval=50
+    # )
+    # # filename = os.path.join(outputdir, f"{title}.png")
     gifpath = os.path.join(output_dir, title)
     os.makedirs(gifpath, exist_ok=True)
 
-    ani.save(os.path.join(gifpath, f"{title}.gif"), writer="imagemagicks", dpi=80)
+    # ani.save(os.path.join(gifpath, f"{title}.gif"), writer="imagemagicks", dpi=80)
 
-    angles = [(30, 0), (30, 90), (30, 180), (30, 270), (90, 0), (-90, 0)]
-    names = ["front", "right", "back", "left", "top", "bottom"]
+    # angles = [(30, 0), (30, 90), (30, 180), (30, 270), (90, 0), (-90, 0)]
+    # names = ["front", "right", "back", "left", "top", "bottom"]
+    angles = [(90, 0), (-90, 0)]
+    names = ["top", "bottom"]
 
+    # divider = make_axes_locatable(ax)
+    # cax = divider.append_axes("right", size="5%", pad=0.05)
+
+    cax = fig.add_axes(
+        [
+            ax.get_position().x1 - 0.03,
+            ax.get_position().y0 + 0.15,
+            0.02,
+            ax.get_position().height * 0.65,
+        ]
+    )
+
+    cmap = plt.cm.get_cmap("coolwarm", z.size(0))
+    cbar = plt.colorbar(
+        plt.cm.ScalarMappable(
+            cmap=cmap, norm=colors.Normalize(vmin=z.min(), vmax=z.max())
+        ),
+        cax=cax,
+        fraction=0.001,
+    )
+    cbar.ax.get_yaxis().labelpad = 20
+    cbar.set_label("Test Acc (%)", rotation=90)
+
+    ax.w_zaxis.line.set_lw(0.0)  # get_zaxis().set_visible(False)
+    ax.set_zticks([])
+    ax.set_zlabel("")
+    # ax.spines["z"].set_visible(False)
     for ((elev, azim), name) in zip(angles, names):
         ax.view_init(elev=elev, azim=azim)
         plt.savefig(os.path.join(gifpath, f"{title}_view_{name}.png"))
@@ -474,11 +528,11 @@ def generate_scatter_point_series(
 
 
 def generate_imdb_acc_3d_scatter_point_series(
-    data: dict, exceptions: typ.List[str], outputdir: str
+    data: dict, exceptions: typ.List[str], outputdir: str, default="imdb"
 ):
-    assert "imdb" in data and "test_acc" in data
-    outputdir = osp.join(outputdir, "imdb-acc-vs")
-    exceptions.extend(["imdb", "test_acc"])
+    # assert default in data and "test_acc" in data
+    outputdir = osp.join(outputdir, f"{default}-acc-vs")
+    exceptions.extend([default, "Test Acc (%)"])
     subtitle = ["multi-graphs", "single-graph"]
     for k in data.keys():
         if k in exceptions:
@@ -486,26 +540,26 @@ def generate_imdb_acc_3d_scatter_point_series(
         series = data[k]
         series_shape = series.shape
 
-        for i in range(2):
-            imdb = data["imdb"][:, i]
-            xtitle = f"imdb-{subtitle[i]}"
-            if len(series_shape) > 1:
-                _series = series[:, i]
-                ytitle = f"{k}-{subtitle[i]}"
-            else:
-                _series = series
-                ytitle = k
+        # for i in :
+        imdb = data[default]
+        xtitle = default
+        # if len(series_shape) > 1:
+        # _series = series[:]
+        # ytitle = f"{k}-{subtitle[i]}"
+        # else:
+        _series = series
+        ytitle = k
 
-            plot_3d_plane(
-                imdb,
-                _series,
-                data["test_acc"],
-                xtitle,
-                ytitle,
-                "accuracy",
-                f"{xtitle}_acc_{ytitle}",
-                outputdir,
-            )
+        plot_3d_plane(
+            imdb,
+            _series,
+            data["Test Acc (%)"],
+            xtitle,
+            ytitle,
+            "accuracy",
+            f"{xtitle}_acc_{ytitle}",
+            outputdir,
+        )
 
 
 def generate_3d_perspective_series(
@@ -539,6 +593,20 @@ def generate_3d_perspective_series(
         )
 
 
+# Let's assume x and y are your input tensors.
+# x = torch.tensor([1.0, 2.0, 3.0])
+# y = torch.tensor([2.0, 3.0, 4.0])
+
+
+def pearson_correlation(x, y):
+    vx = x - torch.mean(x)
+    vy = y - torch.mean(y)
+
+    return torch.sum(vx * vy) / (
+        torch.sqrt(torch.sum(vx**2)) * torch.sqrt(torch.sum(vy**2))
+    )
+
+
 import tqdm
 
 if __name__ == "__main__":
@@ -547,23 +615,26 @@ if __name__ == "__main__":
     # num_layers = 16
     # num_layers = 21
     savedirs = [
-        "results_v1/random+magnitude+vanilla/ERK/vgg-c/0.01/",
-        "results_v1/random+magnitude+vanilla/ERK/ResNet18/0.01/",
-        "results_v1/random+magnitude+vanilla/ERK/ResNet34/0.01/",
-        # "results_v2/random+magnitude+vanilla/ERK/vgg-c/0.01/",
-        # "results_v4/random+magnitude+vanilla/ERK/vgg-c/0.01/",
-        "results_v1/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
-        # "results_v3/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
-        # "results_v2/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
+        "results_itop/random+magnitude+vanilla/ERK/vgg-d/0.01/",
+        "results_itop/random+magnitude+vanilla/ERK/ResNet18/0.01/",
+        "results_itop/random+magnitude+vanilla/ERK/ResNet34/0.01/",
+        # "results_v1/random+magnitude+vanilla/ERK/vgg-c/0.01/",
+        # "results_v1/random+magnitude+vanilla/ERK/ResNet18/0.01/",
         # "results_v1/random+magnitude+vanilla/ERK/ResNet34/0.01/",
-        "results_v4/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
+        # # "results_v2/random+magnitude+vanilla/ERK/vgg-c/0.01/",
+        # # "results_v4/random+magnitude+vanilla/ERK/vgg-c/0.01/",
+        # "results_v1/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
+        # # "results_v3/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
+        # # "results_v2/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
+        # # "results_v1/random+magnitude+vanilla/ERK/ResNet34/0.01/",
+        # "results_v4/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
         # "results_v2/random+magnitude+vanilla/ERK/ResNet34/0.01/",
         # "results_v2/random+magnitude+ramanujan/ERK/ResNet18/0.01/",
         # "results_v2/random+magnitude+ramanujan/ERK/vgg-c/0.01/",
     ]
     for savedir in tqdm.tqdm(savedirs, total=len(savedirs)):
         model_type = savedir.split("/")[3]
-        if model_type == "vgg-c":
+        if model_type == "vgg-d":
             num_layers = 16
         elif model_type == "ResNet18":
             num_layers = 21
@@ -572,13 +643,28 @@ if __name__ == "__main__":
         else:
             raise NotImplementedError
 
-        outputdir = f"analysis_v2/{savedir}"
+        outputdir = f"analysis_itop_v2/{savedir}"
         os.makedirs(outputdir, exist_ok=True)
 
         files = list(filter(lambda x: x.endswith("_finetune.pth"), os.listdir(savedir)))
         seeds = set(int(x.split("_")[1]) for x in files)
         for seed in seeds:
             data = {k: v.squeeze() for k, v in read(seed).items()}
+            if model_type == "vgg-d":
+                filter_mask = (
+                    (data["Iterative_Mean_Ramanujan_Bound"] > 0.05)
+                    & (data["full_spectrum_l2"] < 6)
+                    & (data["Iterative_Mean_Spectral_Gap"] > 0.05)
+                )
+                data = {k: v[filter_mask] for k, v in data.items()}
+
+            for k, v in data.items():
+                if k == "Test Acc (%)":
+                    continue
+                print(
+                    f"{model_type} {k} pearson= {pearson_correlation(data['Test Acc (%)'], v)}"
+                )
+
             # v[1::] skipping the first mask
             # delta, anchor, imdb, narc, test_acc, epochs, iou_heatmap = data[0:7]
             # delta_cos, delta_l2, anchor_cos, anchor_l2 = data[7::]
@@ -590,17 +676,22 @@ if __name__ == "__main__":
             # data, "epochs", ["iou_heatmap", "sign_heatmap"], outputdir
             # )
             # ## acc series
-            print("generating acc series")
-            generate_scatter_point_series(
-                data,
-                "test_acc",
-                ["iou_heatmap", "epochs", "sign_heatmap"],
-                outputdir,
-                swapaxis=True,
-            )
+            # print("generating acc series")
+            # generate_scatter_point_series(
+            # data,
+            # "Test Acc (%)",
+            # ["iou_heatmap", "epochs", "sign_heatmap"],
+            # outputdir,
+            # swapaxis=True,
+            # )
             ## imdb vs acc vs ....
             # print("generating imdb-v-acc series")
-            # generate_imdb_acc_3d_scatter_point_series(data, ["iou_heatmap"], outputdir)
+            # generate_imdb_acc_3d_scatter_point_series(
+            # data, ["iou_heatmap"], outputdir, "Iterative_Mean_Ramanujan_Bound"
+            # )
+            # generate_imdb_acc_3d_scatter_point_series(
+            # data, ["iou_heatmap"], outputdir, default="Ramanujan_Bound"
+            # )
 
             # # ## persepective series
             # print("generating perspective series")

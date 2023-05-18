@@ -366,7 +366,8 @@ def create_2d_scatter_plot(
         x, y = y, x
         xtitle, ytitle = ytitle, xtitle
     # Create scatter plot
-    fig, ax = create_2d_blank_chart(x, y, xtitle, ytitle, 0.05, (8, 8))
+    if model_type == "ResNet34":
+        fig, ax = create_2d_blank_chart(x, y, xtitle, ytitle, 0.05, (8, 8))
     norm_idx = np.linspace(0, 1, x.size(0))
     cmap = plt.cm.get_cmap("plasma", x.size(0))
     ax.scatter(x, y, c=cmap(norm_idx), marker="o")

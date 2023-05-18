@@ -59,6 +59,7 @@ class Ramanujan:
         if return_imdb:
             ret.append(iterative_graphs_analysis[0])
             ret.append(iterative_graphs_analysis[1])
+            ret.append(full_graph_analysis[0])
         return ret
 
     def full_graph_score(

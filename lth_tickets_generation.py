@@ -338,7 +338,7 @@ def parser():
     parser.add_argument("--num-iteration", type=int, default=2)
     parser.add_argument("--pretrained", action="store_true")
     parser.add_argument("--pretrained-iter", type=int, default=500)
-    parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--alt", action="store_true")
 
     # ITOP settings
     sparselearning.core.add_sparse_args(parser)
@@ -386,6 +386,7 @@ def generate_ticket_criteria(
     cnt = 0
     # layer_imdb = {}
     target = len(masks)
+    layer_db = th.zeros(target).cuda()
     layer_imdb = th.zeros(target).cuda()
     layer_wimdb = th.zeros(target).cuda()
     layer_full_spectrum = th.zeros(target).cuda()
@@ -406,6 +407,7 @@ def generate_ticket_criteria(
         # imdb = ramanujan_criteria(mask, weight)
         layer_imdb[cnt] = full_spectrum[1]  # updating layer_imdb
         layer_wimdb[cnt] = full_spectrum[2]  # updating layer_imdb
+        layer_db[cnt] = full_spectrum[3]  # updating layer_imdb
         layer_full_spectrum[cnt] = full_spectrum[0]  # updating layer_imdb
         mask_density[cnt] = masks[name].sum() / masks[name].numel()
 
@@ -426,6 +428,7 @@ def generate_ticket_criteria(
     return {
         "layer_imdb": layer_imdb,
         "layer_wimdb": layer_wimdb,
+        "layer_db": layer_db,
         "layer_full_spectrum": layer_full_spectrum,
         "avg_wimdb": avg_wimdb,
         "avg_imdb": avg_imdb,
@@ -477,7 +480,7 @@ def main():
                 validation_split=args.valid_split,
             )
         elif args.data == "cifar10":
-            num_classes = 10
+            num_classes = 100
             train_loader_full, _, _ = get_cifar10_dataloaders(
                 args,
                 args.valid_split,
@@ -607,14 +610,16 @@ def main():
                         and ticket["layer_full_spectrum"][j]
                         >= best_ticket["layer_full_spectrum"][j]
                     )
-                    strict_condition = (
-                        loose_condition
-                        and ticket["layer_wimdb"][j] <= best_ticket["layer_wimdb"][j]
+                    alt_condition = (
+                        ticket["layer_db"][j] < best_ticket["layer_db"][j]
+                        and ticket["layer_full_spectrum"][j]
+                        >= best_ticket["layer_full_spectrum"][j]
                     )
-                    if (args.strict and strict_condition) or (
-                        not args.strict and loose_condition
+                    if (args.alt and alt_condition) or (
+                        not args.alt and loose_condition
                     ):
                         best_ticket["layer_imdb"][j] = ticket["layer_imdb"][j]
+                        best_ticket["layer_db"][j] = ticket["layer_db"][j]
                         best_ticket["layer_wimdb"][j] = ticket["layer_wimdb"][j]
                         best_ticket["layer_full_spectrum"][j] = ticket[
                             "layer_full_spectrum"
@@ -636,6 +641,7 @@ def main():
                 density += v.sum()
                 total += v.numel()
 
+            avg_db = best_ticket["layer_db"].mean(dim=-1)
             avg_imdb = best_ticket["layer_imdb"].mean(dim=-1)
             avg_wimdb = best_ticket["layer_wimdb"].mean(dim=-1)
             avg_spec = best_ticket["layer_full_spectrum"].mean(dim=-1)
@@ -645,6 +651,7 @@ def main():
             print(
                 f"mask_no {mask_no}|"
                 f" imdb {avg_imdb:.4f}| wimdb {avg_wimdb:.4f}|"
+                f" db {avg_db:.4f}|"
                 f" spect. {avg_spec:.4f}| expl. {explored:.2f}%|"
                 f" density = {current_density:.2f}%|"
                 f" last-saved: {last_saved}| to-save: {save_flag}"

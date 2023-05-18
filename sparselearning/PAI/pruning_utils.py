@@ -177,7 +177,7 @@ class Mag(Pruner):
     def __init__(self, masked_parameters):
         super(Mag, self).__init__(masked_parameters)
 
-    def score(self, model, loss, dataloader, device):
+    def score(self, *args, **kwargs):
         for _, p in self.masked_parameters:
             self.scores[id(p)] = th.clone(p.data).detach().abs_()
 
