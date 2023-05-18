@@ -8,6 +8,7 @@ read -p "epoch: " epoch
 read -p "mask-pop: " pop
 read -p "mask-sam: " sam
 read -p "mask-iter: " miter
+read -p "pretrain-iter: " piter
 read -p "output-dir: " dir
 read -p "skip generating [y, n]? : " skip
 
@@ -30,7 +31,7 @@ CUDA_VISIBLE_DEVICES=$cuda python lth_tickets_generation.py --sparse --seed 18 -
 --decay_frequency 30000 --growth random --death magnitude --redistribution none --output-dir $dir \
 --num-iteration $miter --mask-population $pop --mask-sampling $sam --sparse_init $sparse_init \
 --batch $batch \
---pretrained --pretrained-iter 500
+--pretrained --pretrained-iter $piter
 
 fi
 CUDA_VISIBLE_DEVICES=$cuda python lth_tickets_training.py --sparse --seed 18 --multiplier 1 --lr 0.1 \

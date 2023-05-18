@@ -583,7 +583,7 @@ if __name__ == "__main__":
     timestr = time.strftime("%Hh%Mm%Ss_on_%b_%d_%Y")
     savedir = os.path.join(
         args.output_dir,
-        "pretraining",
+        f"pretraining_{args.data}",
         args.model,
     )
     args.savedir = savedir

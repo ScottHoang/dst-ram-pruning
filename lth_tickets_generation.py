@@ -568,7 +568,8 @@ def main():
         # model = cls(*(cls_args + [args.save_features, args.bench])).to(device)
 
         if args.pretrained:
-            folder = "pretraining_imnet" if args.data == "imnet100" else "pretraining"
+            folder = "pretraining_" +  args.data
+            # folder = "pretraining_imnet" if args.data == "imnet100" else "pretraining"
             path = osp.join(
                 folder, args.model, f"seed_0_iter_{args.pretrained_iter}.pth"
             )
