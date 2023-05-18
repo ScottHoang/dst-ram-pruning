@@ -1,5 +1,0 @@
-14:12:29: Namespace(batch_k=1, batch_size=128, bench=False, data='cifar10', death='magnitude', death_rate=0.5, decay_frequency=30000, decay_schedule='cosine', density=0.01, epochs=250, fix=False, fp16=False, from_init=False, growth='random', iters=1, l1=0.0, l2=0.0005, log_interval=100, lr=0.1, mask_population=2000, mask_sampling=10, max_threads=10, model='vgg_d', momentum=0.9, multiplier=1, no_cuda=False, num_iteration=-1, optimizer='sgd', output_dir='./', plateau_threshold=0.05, plateau_window=5, ramanujan=False, ramanujan_full_graph=False, ramanujan_max_try=3, ramanujan_soft=0.0, redistribution='none', resume=None, save='16831411499176404.pt', save_features=False, savedir='./pretraining/vgg_d', seed=18, skip_exist_full=False, skip_exist_partial=False, sparse=True, sparse_init='Taylor1ScorerAbs', start_epoch=1, test_batch_size=100, update_frequency=1500, use_grad=False, valid_split=0.0)
-14:12:30: 
-
-
-14:12:30: ================================================================================
