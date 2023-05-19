@@ -210,54 +210,41 @@ def get_cifar10_dataloaders(
 def get_tinyimagenet_dataloaders(args, validation_split=-1.0):
     traindir = os.path.join(args.datadir, "train")
     valdir = os.path.join(args.datadir, "val")
-    normalize = transforms.Normalize(
-        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+    # normalize = transforms.Normalize(
+    # mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+    # )
+    data_transform_train = create_transform(
+        input_size=64,
+        is_training=True,
+        color_jitter=0.3,
+        auto_augment="rand-m9-mstd0.5-inc1",
     )
+    data_transform_val = create_transform(input_size=64, is_training=False)
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        transforms.Compose(
-            [
-                transforms.RandomResizedCrop(224),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize,
-            ]
-        ),
-    )
+    train_dataset = datasets.ImageFolder(traindir, data_transform_train)
 
-    if args.distributed:
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    else:
-        train_sampler = None
+    # if args.distributed:
+    # train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
+    # else:
+    train_sampler = None
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         shuffle=(train_sampler is None),
-        num_workers=args.workers,
+        num_workers=8,
         pin_memory=True,
         sampler=train_sampler,
     )
 
     val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(
-            valdir,
-            transforms.Compose(
-                [
-                    transforms.Resize(256),
-                    transforms.CenterCrop(224),
-                    transforms.ToTensor(),
-                    normalize,
-                ]
-            ),
-        ),
+        datasets.ImageFolder(valdir, data_transform_val),
         batch_size=args.batch_size,
         shuffle=False,
-        num_workers=args.workers,
+        num_workers=4,
         pin_memory=True,
     )
-    return train_loader, val_loader
+    return train_loader, val_loader, val_loader
 
 
 def get_imagenet_dataloaders(args, validation_split=-1.0):

@@ -34,6 +34,7 @@ from sparselearning.models import ResNet34
 from sparselearning.models import VGG16
 from sparselearning.models import WideResNet
 from sparselearning.utils import get_cifar100_dataloaders
+from sparselearning.utils import get_tinyimagenet_dataloaders
 from sparselearning.utils import get_cifar10_dataloaders
 from sparselearning.utils import get_dense_state_dict
 from sparselearning.utils import get_mnist_dataloaders
@@ -503,13 +504,23 @@ def main():
                     args, validation_split=args.valid_split
                 )
             elif args.data == "cifar10":
+                num_classes = 100
                 train_loader, valid_loader, test_loader = get_cifar10_dataloaders(
                     args, args.valid_split, max_threads=args.max_threads
                 )
             elif args.data == "cifar100":
+                num_classes = 100
                 train_loader, valid_loader, test_loader = get_cifar100_dataloaders(
                     args, args.valid_split, max_threads=args.max_threads
                 )
+            elif args.data == "tinyimnet":
+                args.datadir = "./tiny-imagenet-200"
+                # scaler = th.cuda.amp.GradScaler()
+                num_classes = 200
+                train_loader, valid_loader, test_loader = get_tinyimagenet_dataloaders(
+                    args
+                )
+                train_loader_full = train_loader
             if args.model not in models:
                 print(
                     "You need to select an existing model via the --model argument. Available models include: "
@@ -518,11 +529,9 @@ def main():
                     print("\t{0}".format(key))
                 raise Exception("You need to select a model")
             elif args.model == "ResNet18":
-                model = ResNet18(c=100).to(device)
+                model = ResNet18(c=num_classes).to(device)
             elif args.model == "ResNet34":
-                model = ResNet34(c=100).to(device)
-            elif args.model == "ResNet34":
-                model = ResNet34(c=100).to(device)
+                model = ResNet34(c=num_classes).to(device)
             elif args.model == "vgg-d":
                 num_classes = 100  # if args.data == "imnet100" else 10
                 model = VGG16("D", num_classes).to(device)
