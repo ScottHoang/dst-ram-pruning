@@ -210,16 +210,28 @@ def get_cifar10_dataloaders(
 def get_tinyimagenet_dataloaders(args, validation_split=-1.0):
     traindir = os.path.join(args.datadir, "train")
     valdir = os.path.join(args.datadir, "val")
-    # normalize = transforms.Normalize(
-    # mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-    # )
-    data_transform_train = create_transform(
-        input_size=64,
-        is_training=True,
-        color_jitter=0.3,
-        auto_augment="rand-m9-mstd0.5-inc1",
+    normalize = transforms.Normalize(
+        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
     )
-    data_transform_val = create_transform(input_size=64, is_training=False)
+    data_transform_train = transforms.Compose(
+        [
+            transforms.RandomCrop(64, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize,
+        ]
+    )
+
+    data_transform_val = transforms.Compose([transforms.ToTensor(), normalize])
+
+    ###
+    # data_transform_train = create_transform(
+    # input_size=64,
+    # is_training=True,
+    # color_jitter=0.3,
+    # auto_augment=None,
+    # )
+    # data_transform_val = create_transform(input_size=64, is_training=False)
 
     train_dataset = datasets.ImageFolder(traindir, data_transform_train)
 

@@ -540,6 +540,7 @@ def main():
             )
         elif args.data == "tinyimnet":
             args.datadir = "./tiny-imagenet-200"
+            exception = "classifier"
             # scaler = th.cuda.amp.GradScaler()
             num_classes = 200
             train_loader, valid_loader, test_loader = get_tinyimagenet_dataloaders(args)
@@ -576,7 +577,7 @@ def main():
         # model = cls(*(cls_args + [args.save_features, args.bench])).to(device)
 
         if args.pretrained:
-            folder = "pretraining_" +  args.data
+            folder = "pretraining_" + args.data
             # folder = "pretraining_imnet" if args.data == "imnet100" else "pretraining"
             path = osp.join(
                 folder, args.model, f"seed_0_iter_{args.pretrained_iter}.pth"

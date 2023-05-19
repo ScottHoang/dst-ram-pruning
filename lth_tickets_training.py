@@ -250,13 +250,13 @@ def train(model, device, train_loader, optimizer, epoch, mask=None, scaler=None)
         correct += pred.eq(target.view_as(pred)).sum().item()
         n += target.shape[0]
 
-        if not scaler:
-            loss.backward()
-            optimizer.step()
-        else:
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+        # if not scaler:
+        loss.backward()
+        optimizer.step()
+        # else:
+        # scaler.scale(loss).backward()
+        # scaler.step(optimizer)
+        # scaler.update()
 
         if batch_idx % args.log_interval == 0:
             print_and_log(
@@ -527,11 +527,13 @@ def main():
                 )
             elif args.data == "tinyimnet":
                 args.datadir = "./tiny-imagenet-200"
+                exception = "classifier"
                 # scaler = th.cuda.amp.GradScaler()
                 num_classes = 200
-                train_loader, valid_loader, test_loader = get_tinyimagenet_dataloaders(args)
+                train_loader, valid_loader, test_loader = get_tinyimagenet_dataloaders(
+                    args
+                )
                 train_loader_full = train_loader
-
 
             elif args.data == "imnet100":
                 exception = "classifier"
@@ -554,7 +556,7 @@ def main():
             elif args.model == "ResNet34":
                 model = ResNet34(c=num_classes).to(device)
             elif args.model == "vgg-d":
-                if args.data == 'cifar10':
+                if args.data == "cifar10":
                     num_classes = 10
 
                 model = VGG16("D", num_classes).to(device)
