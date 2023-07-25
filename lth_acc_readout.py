@@ -589,6 +589,10 @@ if __name__ == "__main__":
     # num_layers = 16
     # num_layers = 21
     savedirs = [
+        # "./cf100_iter100_results/ERK/ResNet18/0.01/population-2000_sampling-20_iter-20",
+        "./cf100_iter100_results/SNIP/ResNet34/0.01/population-2000_sampling-20_iter-2",
+        "./cf100_iter100_results/GraSP/ResNet34/0.01/population-2000_sampling-20_iter-2",
+        "./cf100_iter100_results/ERK/ResNet34/0.01/population-2000_sampling-100_iter-20",
         # "./results_lth_v8/SNIP/vgg-d/0.01/population-3000_sampling-10_iter-2",
         # "./results_lth_v8/GraSP/vgg-d/0.01/population-3000_sampling-10_iter-2",
         # "./results_lth_v8/ERK/vgg-d/0.01/population-3000_sampling-10_iter-2",
@@ -619,8 +623,8 @@ if __name__ == "__main__":
         # "./results_lth_v8_Wpretrained/ERK/ResNet34/0.01/population-3000_sampling-100_iter-2",
         # "./results_lth_v8_Wpretrained/Rand/ResNet34/0.01/population-3000_sampling-100_iter-2",
         #
-        "./results_lth_v8_Wfull/SNIP/ResNet18/0.01/population-3000_sampling-10_iter-2",
-        "./results_lth_v8_Wfull/SNIP/vgg-d/0.01/population-3000_sampling-10_iter-2",
+        # "./results_lth_v8_Wfull/SNIP/ResNet18/0.01/population-3000_sampling-10_iter-2",
+        # "./results_lth_v8_Wfull/SNIP/vgg-d/0.01/population-3000_sampling-10_iter-2",
     ]
     lth_results = {"vgg-d": 0.889, "ResNet18": 0.8943, "ResNet34": 0.9143}
     lth_rewind_results = {"vgg-d": 0.9136, "ResNet18": 0.9122, "ResNet34": 0.9280}

@@ -308,23 +308,47 @@ def read(which_seed=0):
     # __import__("pdb").set_trace()
     # sign_heatmap = read_sign(masks, sign_heatmap, which_seed)
 
-    full_layer_wise_description = (
-        th.cat((mask_characteristics, weighted_init_characteristics), dim=1)
-        .norm(dim=1, keepdim=True)
-        .mean(dim=-1)
+    # full_layer_wise_description = (
+    # th.cat((mask_characteristics, weighted_init_characteristics), dim=1)
+    # .norm(dim=1, keepdim=True)
+    # .mean(dim=-1)
+    # )
+    pearson_weights = th.tensor(
+        [
+            pearson_correlation(all_test_acc, avg_masks_characteristics[:, 0]).abs(),
+            pearson_correlation(all_test_acc, avg_masks_characteristics[:, 1]).abs(),
+            pearson_correlation(all_test_acc, avg_weights_characteristics[:, 0]).abs(),
+            pearson_correlation(all_test_acc, avg_weights_characteristics[:, 1]).abs(),
+        ]
     )
-    full_spectrum_description = (
+    pearson_weights = pearson_weights[None, :, None] / pearson_weights.sum()
+
+    all_test_acc = (all_test_acc * 100).squeeze()
+    full_layer_wise_description = (
         th.cat(
             (
                 mask_characteristics,
                 weighted_init_characteristics,
-                grad_init_characteristics,
             ),
             dim=1,
         )
+        .mul(pearson_weights)
         .norm(dim=1, keepdim=True)
         .mean(dim=-1)
     )
+
+    # full_spectrum_description = (
+    # th.cat(
+    # (
+    # mask_characteristics,
+    # weighted_init_characteristics,
+    # grad_init_characteristics,
+    # ),
+    # dim=1,
+    # )
+    # .norm(dim=1, keepdim=True)
+    # .mean(dim=-1)
+    # )
     # print(grad_init_characteristics)
     # print(full_layer_wise_description.shape)
     # __import__("pdb").set_trace()
@@ -335,7 +359,7 @@ def read(which_seed=0):
         "Iterative_Mean_Spectral_Gap": avg_weights_characteristics[:, 0],
         "Spectral_Gap": avg_weights_characteristics[:, 1],
         "full_spectrum_l2": full_layer_wise_description,
-        "Test Acc (%)": all_test_acc * 100,
+        "Test Acc (%)": all_test_acc,
     }
 
     # ret = {
@@ -364,7 +388,7 @@ def create_2d_scatter_plot(x, y, title, xtitle, ytitle, output_dir, swapaxis=Fal
         x, y = y, x
         xtitle, ytitle = ytitle, xtitle
     # Create scatter plot
-    if model_type == "ResNet34":
+    if True:  # model_type == "ResNet34":
         fig, ax = create_2d_blank_chart(x, y, xtitle, ytitle, 0.001, (11, 9))
     else:
         fig, ax = create_2d_blank_chart(x, y, xtitle, ytitle, 0.001, (9, 9))
@@ -376,7 +400,7 @@ def create_2d_scatter_plot(x, y, title, xtitle, ytitle, output_dir, swapaxis=Fal
     # Save plot to file
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    if model_type == "ResNet34":
+    if True:  # model_type == "ResNet34":
         cbar = plt.colorbar(
             plt.cm.ScalarMappable(
                 cmap=cmap, norm=colors.Normalize(vmin=0, vmax=x.size(0))
@@ -615,9 +639,11 @@ if __name__ == "__main__":
     # num_layers = 16
     # num_layers = 21
     savedirs = [
-        "results_itop/random+magnitude+vanilla/ERK/vgg-d/0.01/",
-        "results_itop/random+magnitude+vanilla/ERK/ResNet18/0.01/",
-        "results_itop/random+magnitude+vanilla/ERK/ResNet34/0.01/",
+        "results_itop_cifar100/random+magnitude+vanilla/ERK/ResNet18/0.01/",
+        "results_itop_cifar100/random+magnitude+vanilla/ERK/ResNet34/0.01/",
+        "results_itop_cifar100/random+magnitude+vanilla/ERK/vgg-d/0.01/",
+        # "results_itop/random+magnitude+vanilla/ERK/ResNet18/0.01/",
+        # "results_itop/random+magnitude+vanilla/ERK/ResNet34/0.01/",
         # "results_v1/random+magnitude+vanilla/ERK/vgg-c/0.01/",
         # "results_v1/random+magnitude+vanilla/ERK/ResNet18/0.01/",
         # "results_v1/random+magnitude+vanilla/ERK/ResNet34/0.01/",
@@ -643,7 +669,7 @@ if __name__ == "__main__":
         else:
             raise NotImplementedError
 
-        outputdir = f"analysis_itop_v2/{savedir}"
+        outputdir = f"analysis_itop_cf100/{savedir}"
         os.makedirs(outputdir, exist_ok=True)
 
         files = list(filter(lambda x: x.endswith("_finetune.pth"), os.listdir(savedir)))
@@ -676,22 +702,22 @@ if __name__ == "__main__":
             # data, "epochs", ["iou_heatmap", "sign_heatmap"], outputdir
             # )
             # ## acc series
-            # print("generating acc series")
-            # generate_scatter_point_series(
-            # data,
-            # "Test Acc (%)",
-            # ["iou_heatmap", "epochs", "sign_heatmap"],
-            # outputdir,
-            # swapaxis=True,
-            # )
+            print("generating acc series")
+            generate_scatter_point_series(
+                data,
+                "Test Acc (%)",
+                ["iou_heatmap", "epochs", "sign_heatmap"],
+                outputdir,
+                swapaxis=True,
+            )
             ## imdb vs acc vs ....
-            # print("generating imdb-v-acc series")
-            # generate_imdb_acc_3d_scatter_point_series(
-            # data, ["iou_heatmap"], outputdir, "Iterative_Mean_Ramanujan_Bound"
-            # )
-            # generate_imdb_acc_3d_scatter_point_series(
-            # data, ["iou_heatmap"], outputdir, default="Ramanujan_Bound"
-            # )
+            print("generating imdb-v-acc series")
+            generate_imdb_acc_3d_scatter_point_series(
+                data, ["iou_heatmap"], outputdir, "Iterative_Mean_Ramanujan_Bound"
+            )
+            generate_imdb_acc_3d_scatter_point_series(
+                data, ["iou_heatmap"], outputdir, default="Ramanujan_Bound"
+            )
 
             # # ## persepective series
             # print("generating perspective series")
